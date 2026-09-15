@@ -1,0 +1,29 @@
+{
+  "name": "pdf-trend-lab",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "dev:sandbox": "wrangler pages dev dist --d1=pdftrendlab-production --local --ip 0.0.0.0 --port 3000",
+    "preview": "wrangler pages dev dist --d1=pdftrendlab-production --local",
+    "deploy": "npm run build && wrangler pages deploy dist --project-name pdftrendlab",
+    "db:migrate:local": "wrangler d1 migrations apply pdftrendlab-production --local",
+    "db:migrate:prod": "wrangler d1 migrations apply pdftrendlab-production",
+    "db:reset": "rm -rf .wrangler/state/v3/d1 && npm run db:migrate:local",
+    "db:console:local": "wrangler d1 execute pdftrendlab-production --local",
+    "test": "curl -s http://localhost:3000/api/stats",
+    "clean-port": "fuser -k 3000/tcp 2>/dev/null || true"
+  },
+  "dependencies": {
+    "hono": "^4.6.14"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241205.0",
+    "@hono/vite-cloudflare-pages": "^0.4.2",
+    "typescript": "^5.5.0",
+    "vite": "^5.4.0",
+    "wrangler": "^3.90.0"
+  }
+}

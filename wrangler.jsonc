@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "pdftrendlab",
+  "compatibility_date": "2024-12-01",
+  "pages_build_output_dir": "./dist",
+  // D1 is the only storage used (hosted-deploy compatible: no KV, no cron triggers)
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "pdftrendlab-production",
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ]
+}

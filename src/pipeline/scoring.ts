@@ -1,0 +1,123 @@
+// Opportunity scoring — transparent weighted formula from the plan:
+//
+// interest     = normalize(google_trends_avg_12mo)                0-100
+// momentum     = % change of last-90d trend vs prior-90d          0-100 (rising)
+// demand       = normalize(# of distinct real queries found)      0-100
+// competition  = 100 - normalize(query crowding + niche breadth)  0-100
+// buyer_intent = keyword matches on purchase-intent phrases       0-100
+//
+// opportunity  = .30*demand + .25*momentum + .20*competition
+//              + .15*buyer_intent + .10*interest
+//
+// Every component is stored in `explain` so the UI can show WHY (the
+// differentiator reviewers asked for).
+
+export const clamp = (v: number, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, Math.round(v)))
+
+const BUYER_PHRASES = [
+  'how to',
+  'guide',
+  'checklist',
+  'printable',
+  'template',
+  'pdf',
+  'planner',
+  'workbook',
+  'tracker',
+  'sheet',
+  'worksheet',
+  'ebook',
+  'course',
+  'plan',
+  'routine',
+  'for beginners',
+  'step by step',
+  'example',
+  'sample',
+  'free'
+]
+
+export interface ScoreInput {
+  trendsAvg: number // 0-100 raw trends average
+  momentumRaw: number // % change last 90d vs prior 90d (can be negative)
+  distinctQueries: number // total distinct suggestions + questions + reddit posts
+  clusterSize: number // members of this cluster
+  redditEngagement: number // upvotes + 2*comments
+  clusterTexts: string[] // texts in this cluster (for buyer intent)
+  seed: string // seed keyword — phrases contained in it are excluded from buyer-intent matching
+}
+
+export interface ScoreOutput {
+  opportunity: number
+  difficulty: 'Easy' | 'Medium' | 'Hard'
+  interest: number
+  momentum: number
+  competition: number
+  buyerIntent: number
+  demand: number
+  rising: boolean
+  explain: Record<string, string | number>
+}
+
+export function computeScores(input: ScoreInput): ScoreOutput {
+  const interest = clamp(input.trendsAvg)
+
+  // Map momentum %change: -50% .. +100%  ->  0 .. 100
+  const momentum = clamp(((input.momentumRaw + 50) / 150) * 100)
+
+  // Demand proxy: how many distinct real queries this specific cluster attracts
+  // (log scale — a cluster of 2 is weak, 10+ is strong)
+  const demand = clamp((Math.log10(1 + input.clusterSize) / Math.log10(1 + 60)) * 100)
+
+  // Competition proxy: dominated by cluster breadth (a big cluster = a
+  // well-covered sub-topic = harder to rank a new PDF), with a mild global
+  // crowding term. Note: raw query count is mostly a *demand* signal, and
+  // nearly every seed saturates the expansion (~350 ceiling), so it must
+  // not dominate — weight it lightly.
+  const crowding = Math.min(1, input.distinctQueries / 350)
+  const breadth = Math.min(1, input.clusterSize / 15)
+  const competition = clamp(100 - (0.3 * crowding + 0.7 * breadth) * 100)
+
+  // Buyer intent: share of cluster texts containing purchase-intent phrasing.
+  // Phrases already contained in the seed are excluded — otherwise a seed like
+  // "budget planner" would make every text match "planner" and saturate at 100.
+  const phrases = BUYER_PHRASES.filter((p) => !input.seed.includes(p))
+  let hits = 0
+  for (const t of input.clusterTexts) {
+    if (phrases.some((p) => t.includes(p))) hits++
+  }
+  const buyerIntent = clamp((hits / Math.max(1, input.clusterTexts.length)) * 100 * 1.25)
+
+  const opportunity = clamp(
+    0.3 * demand + 0.25 * momentum + 0.2 * competition + 0.15 * buyerIntent + 0.1 * interest
+  )
+
+  const difficulty: ScoreOutput['difficulty'] = competition >= 70 ? 'Easy' : competition >= 40 ? 'Medium' : 'Hard'
+
+  return {
+    opportunity,
+    difficulty,
+    interest,
+    momentum,
+    competition,
+    buyerIntent,
+    demand,
+    rising: input.momentumRaw > 15,
+    explain: {
+      formula: '0.30*demand + 0.25*momentum + 0.20*competition + 0.15*buyer_intent + 0.10*interest',
+      distinctQueries: input.distinctQueries,
+      clusterSize: input.clusterSize,
+      redditEngagement: input.redditEngagement,
+      trendsAvg12mo: Math.round(input.trendsAvg),
+      momentumPctChange: Math.round(input.momentumRaw),
+      demandNote: `${input.clusterSize} distinct real queries in this idea cluster (${input.distinctQueries} total for the seed) across Google Autocomplete + Reddit`,
+      competitionNote:
+        competition >= 70
+          ? 'Low crowding — few overlapping queries, room for a new PDF guide'
+          : competition >= 40
+            ? 'Moderate crowding — differentiated angle recommended'
+            : 'High crowding — many overlapping queries, competitive niche',
+      difficultyRule: 'competition >= 70 = Easy, >= 40 = Medium, else Hard'
+    }
+  }
+}
