@@ -8,6 +8,13 @@
 
   const DIFF_CLASS = { Easy: 'badge-easy', Medium: 'badge-medium', Hard: 'badge-hard' }
   const DIFF_ICON = { Easy: 'fa-face-smile', Medium: 'fa-face-meh', Hard: 'fa-fire' }
+  const GRADE_CLASS = { A: 'badge-easy', B: 'badge-rising', C: 'badge-medium', D: 'badge-hard' }
+
+  function sellBadge(idea) {
+    if (!idea.sell_grade) return ''
+    const tip = (idea.sell_reasons || []).join('\n') || 'Sellability score'
+    return `<span class="badge ${GRADE_CLASS[idea.sell_grade] || 'badge-neutral'}" data-tip="Sellability ${idea.sellability}/100 — will a PDF here actually sell?\n${esc(tip)}"><i class="fas fa-cart-shopping"></i>Sell ${idea.sell_grade} · ${idea.sellability}</span>`
+  }
 
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]))
 
@@ -53,6 +60,7 @@
         </p>
         <div class="flex flex-wrap gap-1.5 mt-2">
           <span class="badge ${DIFF_CLASS[idea.difficulty]}" data-tip="Difficulty from competition score.\n${idea.competition} >= 70 = Easy, >= 40 = Medium, else Hard"><i class="fas ${DIFF_ICON[idea.difficulty]}"></i>${idea.difficulty}</span>
+          ${sellBadge(idea)}
           ${badge('Interest', idea.interest, 'Average Google Trends interest over trailing 12 months (0-100).', 'badge-neutral')}
           ${badge('Competition', idea.competition, 'Inverse of query crowding + cluster breadth.\nHigher = less competition.', 'badge-neutral')}
           ${badge('Momentum', idea.momentum, 'Last-90d trend vs prior-90d trend.\n>50 = growing.', 'badge-neutral')}
@@ -121,7 +129,7 @@
           <span id="f-min-val" class="w-8 text-slate-600">${state.min}</span>
         </label>
         <select id="f-sort" class="px-3 py-1.5 rounded-lg border border-slate-300 bg-white">
-          ${[['opportunity', 'Opportunity'], ['momentum', 'Momentum'], ['interest', 'Interest'], ['demand', 'Demand'], ['updated_at', 'Newest']]
+          ${[['opportunity', 'Opportunity'], ['sellability', 'Sellability'], ['momentum', 'Momentum'], ['interest', 'Interest'], ['demand', 'Demand'], ['updated_at', 'Newest']]
             .map(([v, l]) => `<option value="${v}" ${state.sort === v ? 'selected' : ''}>Sort: ${l}</option>`).join('')}
         </select>
         <a href="/api/export.csv?min=${state.min}${state.q ? '&q=' + encodeURIComponent(state.q) : ''}"
@@ -259,6 +267,7 @@
               </p>
               <div class="flex flex-wrap gap-1.5 mt-3">
                 <span class="badge ${DIFF_CLASS[idea.difficulty]}" data-tip="${esc(ex.difficultyRule || '')}"><i class="fas ${DIFF_ICON[idea.difficulty]}"></i>${idea.difficulty}</span>
+                ${sellBadge(idea)}
                 ${idea.rising ? '<span class="badge badge-rising"><i class="fas fa-arrow-trend-up"></i>Rising</span>' : ''}
                 ${badge('Interest', idea.interest, 'Avg Google Trends interest, trailing 12 months.', 'badge-neutral')}
                 ${badge('Momentum', idea.momentum, `Trend momentum: ${ex.momentumPctChange ?? 0}% change, last 90d vs prior 90d.`, 'badge-neutral')}
@@ -295,6 +304,8 @@
             </ul>
           </section>
         </div>
+
+        ${renderProductPanel(idea)}
 
         <div class="grid md:grid-cols-2 gap-4 mb-4">
           <section class="bg-white rounded-xl border border-slate-200 p-5">
@@ -336,6 +347,66 @@
         options: { plugins: { legend: { display: false } }, scales: { x: { ticks: { maxTicksLimit: 8 } }, y: { min: 0, max: 100 } } }
       })
     }
+  }
+
+  // ---------- PDF product panel (market-driven product idea) ----------
+  function renderProductPanel(idea) {
+    const p = idea.product_idea || {}
+    if (!p.format) return ''
+    const price = p.priceRange ? `$${p.priceRange[0]}–$${p.priceRange[1]}` : ''
+    return `
+      <section class="bg-gradient-to-br from-indigo-50 to-white rounded-xl border border-indigo-200 p-5 mb-4">
+        <h2 class="font-semibold text-ink mb-1"><i class="fas fa-box-open mr-1 text-accent"></i>PDF Product Idea — sellability ${idea.sellability}/100 (${esc(idea.sell_grade)})</h2>
+        <p class="text-sm text-slate-600 mb-3">${esc(p.product || '')}</p>
+        <div class="flex flex-wrap gap-x-6 gap-y-1 text-sm mb-3">
+          <span><i class="fas fa-file-lines text-slate-400 mr-1"></i>Format: <b>${esc(p.format)}</b></span>
+          <span><i class="fas fa-dollar-sign text-slate-400 mr-1"></i>Typical price: <b>${price}</b></span>
+          ${(p.audiences || []).length ? `<span><i class="fas fa-users text-slate-400 mr-1"></i>Audience: <b>${esc(p.audiences.join(', '))}</b></span>` : ''}
+        </div>
+        ${(idea.cross_formats || []).length ? `<p class="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mb-3"><i class="fas fa-check-double mr-1"></i>Buyer-format keywords confirmed by Google + Bing: <b>${esc(idea.cross_formats.join(', '))}</b></p>` : ''}
+        <details class="text-sm">
+          <summary class="cursor-pointer text-accent font-medium">Title suggestions & marketplace competition check</summary>
+          <ul class="mt-2 space-y-1 text-slate-700 list-disc list-inside">
+            ${(p.titleSuggestions || []).map((t) => `<li>${esc(t)}</li>`).join('')}
+          </ul>
+          <div class="flex flex-wrap gap-2 mt-3">
+            ${(p.marketplaceLinks || []).map((m) => `<a href="${esc(m.url)}" target="_blank" rel="noopener" class="text-xs px-3 py-1.5 rounded-full bg-white border border-slate-300 hover:border-accent hover:text-accent"><i class="fas fa-arrow-up-right-from-square mr-1"></i>Check ${esc(m.name)} competition</a>`).join('')}
+          </div>
+        </details>
+      </section>`
+  }
+
+  // ---------- trending words analytics ----------
+  async function renderWords() {
+    const res = await axios.get('/api/trending-words')
+    const { formatWords = [], topicWords = [] } = res.data
+    const maxCount = Math.max(1, ...topicWords.map((w) => w.ideas))
+
+    const wordChip = (w, isFormat) => {
+      const size = 0.75 + (w.ideas / maxCount) * 0.9
+      const heat = w.avgSellability >= 50 ? 'text-emerald-700 bg-emerald-50 border-emerald-200'
+        : w.avgOpportunity >= 45 ? 'text-indigo-700 bg-indigo-50 border-indigo-200'
+        : 'text-slate-600 bg-white border-slate-200'
+      return `<span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border ${heat}" style="font-size:${size}rem"
+        data-tip="Appears in ${w.ideas} ideas across ${w.seeds} seeds\nAvg opportunity ${w.avgOpportunity} · avg sellability ${w.avgSellability}">
+        ${isFormat ? '<i class="fas fa-tag text-[0.65em]"></i>' : ''}${esc(w.word)} <b class="text-[0.7em] opacity-70">${w.ideas}</b></span>`
+    }
+
+    app.innerHTML = `
+      <nav class="mb-4 text-sm"><a href="/" class="nav text-accent hover:underline"><i class="fas fa-arrow-left mr-1"></i>Dashboard</a></nav>
+      <h1 class="text-xl font-bold text-ink mb-1"><i class="fas fa-cloud mr-2 text-accent"></i>Trending Search Words</h1>
+      <p class="text-sm text-slate-500 mb-5">Words dominating the mined ideas. <span class="text-emerald-700 font-medium">Green = high sellability</span>, indigo = high opportunity. Format words carry buyer intent.</p>
+
+      <section class="bg-white rounded-xl border border-slate-200 p-5 mb-4">
+        <h2 class="font-semibold text-ink mb-3"><i class="fas fa-tag mr-1 text-emerald-600"></i>Marketplace format words <span class="text-xs font-normal text-slate-400">— what PDF buyers search for</span></h2>
+        <div class="flex flex-wrap gap-2">${formatWords.length ? formatWords.map((w) => wordChip(w, true)).join('') : '<p class="text-sm text-slate-400">No format words yet — mine more seeds.</p>'}</div>
+      </section>
+
+      <section class="bg-white rounded-xl border border-slate-200 p-5 mb-4">
+        <h2 class="font-semibold text-ink mb-3"><i class="fas fa-fire mr-1 text-orange-500"></i>Topic words</h2>
+        <div class="flex flex-wrap gap-2">${topicWords.length ? topicWords.map((w) => wordChip(w, false)).join('') : '<p class="text-sm text-slate-400">Mine some seeds first.</p>'}</div>
+      </section>`
+    app.querySelector('nav a.nav')?.addEventListener('click', (e) => { e.preventDefault(); go('/') })
   }
 
   // ---------- PDF outline generator (algorithmic, no LLM needed) ----------
@@ -404,6 +475,7 @@
   function render() {
     chart?.destroy(); chart = null
     if (state.view === 'idea' && state.ideaId) renderIdea()
+    else if (state.view === 'words') renderWords()
     else if (state.view === 'trending') renderList('Trending Now', 'fa-arrow-trend-up', '/api/trending')
     else if (state.view === 'favorites') renderList('Favorites', 'fa-star', '/api/favorites')
     else renderDashboard()

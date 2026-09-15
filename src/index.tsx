@@ -45,6 +45,7 @@ app.get('*', (c) => {
       <nav class="ml-auto flex items-center gap-2 text-sm">
         <a href="/" class="px-3 py-1.5 rounded-md hover:bg-slate-100"><i class="fas fa-gauge-high mr-1"></i>Dashboard</a>
         <a href="/?view=trending" class="px-3 py-1.5 rounded-md hover:bg-slate-100"><i class="fas fa-arrow-trend-up mr-1"></i>Trending</a>
+        <a href="/?view=words" class="px-3 py-1.5 rounded-md hover:bg-slate-100"><i class="fas fa-cloud mr-1"></i>Trend Words</a>
         <a href="/?view=favorites" class="px-3 py-1.5 rounded-md hover:bg-slate-100"><i class="fas fa-star mr-1"></i>Favorites</a>
       </nav>
     </div>

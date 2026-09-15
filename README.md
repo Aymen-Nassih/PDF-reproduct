@@ -15,12 +15,26 @@ Built for personal use. No paid APIs required.
 ```
 seed keyword
   → expand: Google Autocomplete (seed + question prefixes + a–z suffixes; DuckDuckGo fallback)
+           + Bing autocomplete (buyer-intent prefixes: printable/template/pdf/digital…)
   → enrich: Google Trends (pytrends-style widget/token flow over HTTP) + Reddit search (pullpush.io fallback)
   → cluster: token-Jaccard agglomerative clustering (seed tokens excluded from similarity)
   → score: opportunity = 0.30·demand + 0.25·momentum + 0.20·competition + 0.15·buyer_intent + 0.10·interest
+  → market: sellability score (cross-engine format-keyword confirmation + buyer intent + audience fit)
+           + concrete PDF product idea (format, price range, audience, title suggestions, marketplace links)
   → store in D1 (12h freshness cache per seed, lazy refresh on browse)
 ```
-Every score component is stored in `ideas.explain` and shown in UI tooltips — the "why" is transparent.
+Every score component is stored in `ideas.explain` / `ideas.sell_reasons` and shown in UI tooltips — the "why" is transparent.
+
+### Sellability (will it actually sell?)
+Sellability = format-keyword demand across TWO engines (Google + Bing, 40pts)
++ cross-engine confirmed format words like `printable/template/pdf/digital` (25pts)
++ buyer-intent carry-over (20pts) + clear buyer audience (15pts).
+Grades: A ≥ 70 "Strong seller", B ≥ 50 "Likely seller", C ≥ 30 "Niche bet", else "Research more".
+
+### Trending Search Words (`/api/trending-words`, nav → Trend Words)
+Aggregates every word across all mined ideas, split into **format words**
+(what PDF buyers type: printable, template, workbook…) and **topic words**,
+each with idea count, spread across seeds, avg opportunity and avg sellability.
 
 ### Score definitions
 | Score | Meaning |
@@ -43,6 +57,7 @@ Every score component is stored in `ideas.explain` and shown in UI tooltips — 
 | GET | `/api/ideas` | Filters: `q, category, difficulty, rising=1, min, sort, limit` |
 | GET | `/api/ideas/:id` | Single idea + favorite state |
 | GET | `/api/trending` | Rising ideas, newest first |
+| GET | `/api/trending-words` | Format + topic word analytics across all ideas |
 | GET | `/api/stats` | Dashboard header numbers |
 | POST/DELETE | `/api/ideas/:id/favorite` | Save / unsave (no auth — personal use) |
 | GET | `/api/favorites` | Saved ideas |
@@ -51,7 +66,7 @@ Every score component is stored in `ideas.explain` and shown in UI tooltips — 
 
 ## Data model (D1)
 - `seeds(keyword, status, fetched_at)` — freshness cache + pipeline lock
-- `ideas(id, title, seed, category, opportunity, difficulty, interest, momentum, competition, buyer_intent, demand, rising, cluster_size, example_keywords[], sample_questions[], sources{}, explain{}, trend_series[], updated_at)`
+- `ideas(id, title, seed, category, opportunity, difficulty, interest, momentum, competition, buyer_intent, demand, rising, cluster_size, example_keywords[], sample_questions[], sources{}, explain{}, trend_series[], sellability, sell_grade, sell_reasons[], product_idea{}, cross_formats[], updated_at)`
 - `favorites(idea_id, created_at)`
 
 ## User guide
@@ -66,6 +81,8 @@ Every score component is stored in `ideas.explain` and shown in UI tooltips — 
 - **Google Trends + Reddit are rate-limited from datacenter IPs** (429/403 in the sandbox) — they
   degrade gracefully (interest/momentum default to neutral; no crash). On a residential IP or via a
   proxy/SerpAPI key they light up fully. Code paths are live and ready.
+- **Etsy/Amazon SERP scraping is IP-blocked** — instead, sellability uses cross-engine format-keyword
+  confirmation, and each product idea ships marketplace search deep-links for manual competition checks
 - Search-volume estimates (DataForSEO) not wired — demand is currently a query-count proxy
 - LLM-written outline text (outline structure is algorithmic; plug in any LLM API later)
 - Auth/multi-user (single-user by design)

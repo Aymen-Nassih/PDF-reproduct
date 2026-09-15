@@ -15,7 +15,10 @@ function parseIdea(r: any) {
     sample_questions: JSON.parse(r.sample_questions || '[]'),
     sources: JSON.parse(r.sources || '{}'),
     explain: JSON.parse(r.explain || '{}'),
-    trend_series: JSON.parse(r.trend_series || '[]')
+    trend_series: JSON.parse(r.trend_series || '[]'),
+    sell_reasons: JSON.parse(r.sell_reasons || '[]'),
+    product_idea: JSON.parse(r.product_idea || '{}'),
+    cross_formats: JSON.parse(r.cross_formats || '[]')
   }
 }
 
@@ -42,7 +45,7 @@ api.get('/ideas', async (c) => {
   const difficulty = c.req.query('difficulty') ?? ''
   const rising = c.req.query('rising') === '1'
   const min = Math.max(0, Math.min(100, parseInt(c.req.query('min') ?? '0', 10) || 0))
-  const sort = ['opportunity', 'momentum', 'interest', 'demand', 'updated_at'].includes(c.req.query('sort') ?? '')
+  const sort = ['opportunity', 'momentum', 'interest', 'demand', 'sellability', 'updated_at'].includes(c.req.query('sort') ?? '')
     ? c.req.query('sort')!
     : 'opportunity'
   const limit = Math.min(200, Math.max(1, parseInt(c.req.query('limit') ?? '60', 10) || 60))
@@ -78,6 +81,62 @@ api.get('/ideas/:id', async (c) => {
   if (!row) return c.json({ error: 'Not found' }, 404)
   const fav = await c.env.DB.prepare('SELECT idea_id FROM favorites WHERE idea_id = ?').bind(id).first()
   return c.json({ idea: { ...parseIdea(row), favorited: !!fav } })
+})
+
+// GET /api/trending-words -> which search words/modifiers dominate the mined data.
+// Aggregates tokens across all ideas' example keywords + sample questions,
+// split into "format" words (marketplace buyer intent) vs topic words.
+api.get('/trending-words', async (c) => {
+  const rows = await c.env.DB
+    .prepare('SELECT title, example_keywords, sample_questions, opportunity, sellability, seed, updated_at FROM ideas')
+    .all<any>()
+
+  const FORMAT_WORDS = new Set([
+    'printable', 'template', 'pdf', 'digital', 'download', 'planner', 'workbook',
+    'worksheet', 'checklist', 'tracker', 'bundle', 'kit', 'ebook', 'guide',
+    'journal', 'calendar', 'spreadsheet', 'excel', 'notion', 'free'
+  ])
+  const STOP = new Set(
+    'the and for with how what why can are you your from that this into near best top free'.split(' ')
+  )
+
+  interface WordStat { word: string; count: number; avgOpp: number; avgSell: number; seeds: Set<string>; isFormat: boolean }
+  const stats = new Map<string, WordStat>()
+
+  for (const r of rows.results) {
+    const texts: string[] = [r.title, ...JSON.parse(r.example_keywords || '[]'), ...JSON.parse(r.sample_questions || '[]')]
+    const words = new Set<string>()
+    for (const t of texts) {
+      for (const w of String(t).toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/)) {
+        if (w.length > 2 && !STOP.has(w)) words.add(w)
+      }
+    }
+    for (const w of words) {
+      if (!stats.has(w)) stats.set(w, { word: w, count: 0, avgOpp: 0, avgSell: 0, seeds: new Set(), isFormat: FORMAT_WORDS.has(w) })
+      const s = stats.get(w)!
+      s.count++
+      s.avgOpp += r.opportunity
+      s.avgSell += r.sellability ?? 0
+      s.seeds.add(r.seed)
+    }
+  }
+
+  const out = [...stats.values()]
+    .filter((s) => s.count >= 2)
+    .map((s) => ({
+      word: s.word,
+      ideas: s.count,
+      seeds: s.seeds.size,
+      avgOpportunity: Math.round(s.avgOpp / s.count),
+      avgSellability: Math.round(s.avgSell / s.count),
+      isFormat: s.isFormat
+    }))
+    .sort((a, b) => b.ideas - a.ideas)
+
+  return c.json({
+    formatWords: out.filter((w) => w.isFormat).slice(0, 15),
+    topicWords: out.filter((w) => !w.isFormat).slice(0, 40)
+  })
 })
 
 // GET /api/trending -> newest + rising ideas (the "Trending Now" feed)
@@ -137,10 +196,15 @@ api.get('/export.csv', async (c) => {
     .all()
 
   const esc = (v: any) => `"${String(v ?? '').replace(/"/g, '""')}"`
-  const header = 'title,category,opportunity,difficulty,interest,momentum,competition,buyer_intent,demand,rising,seed,updated_at'
-  const lines = rows.results.map((r: any) =>
-    [r.title, r.category, r.opportunity, r.difficulty, r.interest, r.momentum, r.competition, r.buyer_intent, r.demand, r.rising ? 'yes' : 'no', r.seed, r.updated_at].map(esc).join(',')
-  )
+  const header = 'title,category,opportunity,sellability,sell_grade,difficulty,interest,momentum,competition,buyer_intent,demand,rising,format,price_min,price_max,seed,updated_at'
+  const lines = rows.results.map((r: any) => {
+    const p = JSON.parse(r.product_idea || '{}')
+    return [
+      r.title, r.category, r.opportunity, r.sellability ?? 0, r.sell_grade ?? '', r.difficulty,
+      r.interest, r.momentum, r.competition, r.buyer_intent, r.demand, r.rising ? 'yes' : 'no',
+      p.format ?? '', p.priceRange?.[0] ?? '', p.priceRange?.[1] ?? '', r.seed, r.updated_at
+    ].map(esc).join(',')
+  })
   return new Response([header, ...lines].join('\n'), {
     headers: {
       'Content-Type': 'text/csv; charset=utf-8',

@@ -1,10 +1,12 @@
 // Core engine: seed -> expand -> cluster -> score -> store.
 // The whole "product" loop from the plan, Worker-compatible.
 import { expandSeed } from '../sources/autocomplete'
+import { expandSeedBing } from '../sources/bing'
 import { getTrends } from '../sources/trends'
 import { mineReddit } from '../sources/reddit'
 import { clusterTexts, tokenize } from './clustering'
 import { computeScores } from './scoring'
+import { analyzeMarket, computeSellability, generateProductIdea } from './market'
 
 export interface IdeaRow {
   id: string
@@ -25,6 +27,11 @@ export interface IdeaRow {
   sources: string
   explain: string
   trend_series: string
+  sellability: number
+  sell_grade: string
+  sell_reasons: string
+  product_idea: string
+  cross_formats: string
 }
 
 async function hashId(text: string): Promise<string> {
@@ -105,10 +112,18 @@ export async function runPipeline(seed: string, db: D1Database): Promise<{ ideas
 
   try {
     // 1. Pull all sources in parallel
-    const [ac, trends, reddit] = await Promise.all([expandSeed(cleanSeed), getTrends(cleanSeed), mineReddit(cleanSeed)])
+    const [ac, trends, reddit, bing] = await Promise.all([
+      expandSeed(cleanSeed),
+      getTrends(cleanSeed),
+      mineReddit(cleanSeed),
+      expandSeedBing(cleanSeed)
+    ])
 
     const allTexts = [...new Set([...ac.suggestions, ...reddit.posts.map((p) => p.title.toLowerCase())])]
     const distinctQueries = allTexts.length + (trends.ok ? trends.risingQueries.length : 0)
+
+    // Market signals for the whole seed (format-keyword demand across engines)
+    const marketSeed = analyzeMarket(cleanSeed, ac.suggestions, bing.suggestions, ac.suggestions)
 
     // 2. Cluster into ideas — seed tokens are excluded from similarity
     // (they appear in nearly every suggestion and would merge all clusters)
@@ -134,6 +149,11 @@ export async function runPipeline(seed: string, db: D1Database): Promise<{ ideas
       const title = titleFrom(cluster.members, cluster.centroidTokens, cleanSeed)
       const id = await hashId(cleanSeed + ':' + cluster.centroidTokens.slice(0, 4).join(':'))
 
+      // Market-intent for THIS cluster + sellability + concrete PDF product idea
+      const market = analyzeMarket(cleanSeed, ac.suggestions, bing.suggestions, texts)
+      const sell = computeSellability(market, texts, scores.demand, scores.buyerIntent)
+      const product = generateProductIdea(title, texts, market)
+
       const sampleQuestions = texts.filter((t) => /^(how|what|why|can|is|are|when|where|which|should)\b/.test(t)).slice(0, 8)
       const exampleKeywords = cluster.centroidTokens
         .slice(0, 8)
@@ -158,33 +178,44 @@ export async function runPipeline(seed: string, db: D1Database): Promise<{ ideas
         sources: JSON.stringify({
           autocomplete: ac.suggestions.length,
           autocompleteQuestions: ac.questions.length,
+          bingSuggestions: bing.suggestions.length,
           redditPosts: reddit.posts.length,
           redditQuestions: reddit.questions.length,
           trendsOk: trends.ok,
           redditSample: reddit.posts.slice(0, 6)
         }),
         explain: JSON.stringify(scores.explain),
-        trend_series: JSON.stringify(trends.series)
+        trend_series: JSON.stringify(trends.series),
+        sellability: sell.score,
+        sell_grade: sell.grade,
+        sell_reasons: JSON.stringify(sell.reasons),
+        product_idea: JSON.stringify(product),
+        cross_formats: JSON.stringify(market.crossEngineFormats)
       }
 
       await db
         .prepare(
           `INSERT INTO ideas (id, title, seed, category, opportunity, difficulty, interest, momentum,
              competition, buyer_intent, demand, rising, cluster_size, example_keywords, sample_questions,
-             sources, explain, trend_series, updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'))
+             sources, explain, trend_series, sellability, sell_grade, sell_reasons, product_idea,
+             cross_formats, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'))
            ON CONFLICT(id) DO UPDATE SET
              title=excluded.title, opportunity=excluded.opportunity, difficulty=excluded.difficulty,
              interest=excluded.interest, momentum=excluded.momentum, competition=excluded.competition,
              buyer_intent=excluded.buyer_intent, demand=excluded.demand, rising=excluded.rising,
              cluster_size=excluded.cluster_size, example_keywords=excluded.example_keywords,
              sample_questions=excluded.sample_questions, sources=excluded.sources,
-             explain=excluded.explain, trend_series=excluded.trend_series, updated_at=datetime('now')`
+             explain=excluded.explain, trend_series=excluded.trend_series,
+             sellability=excluded.sellability, sell_grade=excluded.sell_grade,
+             sell_reasons=excluded.sell_reasons, product_idea=excluded.product_idea,
+             cross_formats=excluded.cross_formats, updated_at=datetime('now')`
         )
         .bind(
           row.id, row.title, row.seed, row.category, row.opportunity, row.difficulty, row.interest,
           row.momentum, row.competition, row.buyer_intent, row.demand, row.rising, row.cluster_size,
-          row.example_keywords, row.sample_questions, row.sources, row.explain, row.trend_series
+          row.example_keywords, row.sample_questions, row.sources, row.explain, row.trend_series,
+          row.sellability, row.sell_grade, row.sell_reasons, row.product_idea, row.cross_formats
         )
         .run()
       stored++
