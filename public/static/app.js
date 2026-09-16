@@ -457,7 +457,9 @@
   function trendCard(t) {
     const srcs = (t.extra.sources || [t.source])
     const score = t.pdf_potential
+    const m = t.metrics || {}
     const color = score >= 70 ? '#16a34a' : score >= 50 ? '#6366f1' : score >= 35 ? '#d97706' : '#94a3b8'
+    const searches = [...new Set([...(m.googleSuggestions || []), ...(m.bingSuggestions || [])])].slice(0, 5)
     return `
     <article class="idea-card fade-up bg-white rounded-xl border border-slate-200 p-4 flex gap-4 items-start">
       <div class="score-ring" style="--score:${score};--ring-color:${color}" data-tip="PDF potential ${score}/100\n${esc((t.reasons || []).join('\n'))}"><span>${score}</span></div>
@@ -465,11 +467,20 @@
         <div class="flex items-center gap-2 flex-wrap">
           <h3 class="font-semibold text-ink leading-snug">${esc(t.term)}</h3>
           ${srcs.map((s) => `<span class="badge badge-neutral" style="color:${SOURCE_META[s]?.color}"><i class="${SOURCE_META[s]?.icon || 'fas fa-circle'}"></i>${SOURCE_META[s]?.label || s}</span>`).join('')}
+          ${t.buyer_formats > 0 ? `<span class="badge badge-easy"><i class="fas fa-cart-shopping"></i>Buyer-verified ×${t.buyer_formats}</span>` : ''}
         </div>
         <p class="text-xs text-slate-500 mt-1">
           ${t.traffic ? `<i class="fas fa-signal mr-1"></i>${esc(t.traffic)} · ` : ''}
           first seen ${esc((t.first_seen || '').slice(5, 16))} · seen ${t.seen_count}×
         </p>
+        ${m.probed ? `
+        <div class="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-slate-600">
+          <span data-tip="Distinct real searches containing this term, found live on Google + Bing autocomplete"><i class="fas fa-magnifying-glass mr-1 text-slate-400"></i><b>${m.breadth}</b> real searches</span>
+          <span data-tip="Real questions people ask about this trend"><i class="fas fa-circle-question mr-1 text-slate-400"></i><b>${m.questionCount}</b> questions</span>
+          <span data-tip="Marketplace format words (printable/template/pdf…) confirmed on BOTH Google and Bing — real buyer demand"><i class="fas fa-tag mr-1 text-slate-400"></i><b>${(m.buyerFormats || []).length}</b> buyer formats</span>
+        </div>` : `<p class="text-xs text-slate-400 mt-2 italic">Not market-probed yet — preliminary score.</p>`}
+        ${(m.buyerFormats || []).length ? `<div class="flex flex-wrap gap-1 mt-2">${m.buyerFormats.map((f) => `<span class="text-[0.6875rem] bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full">+ ${esc(f)}</span>`).join('')}</div>` : ''}
+        ${searches.length ? `<details class="mt-2 text-xs"><summary class="cursor-pointer text-slate-400 hover:text-slate-600">What people actually search (${m.breadth || searches.length})</summary><ul class="mt-1 space-y-0.5 text-slate-600">${searches.map((s) => `<li class="flex gap-1.5"><i class="fas fa-angle-right text-slate-300 mt-0.5"></i>${esc(s)}</li>`).join('')}</ul></details>` : ''}
         ${t.url ? `<a href="${esc(t.url)}" target="_blank" rel="noopener" class="text-xs text-accent hover:underline"><i class="fas fa-arrow-up-right-from-square mr-1"></i>Source link</a>` : ''}
       </div>
       <button class="mine-btn no-print shrink-0 px-3 py-2 rounded-lg bg-accent text-white text-xs font-semibold hover:bg-indigo-500 disabled:opacity-50" data-term="${esc(t.term)}">
@@ -478,8 +489,8 @@
     </article>`
   }
 
-  async function renderDiscover(source = '', min = 0) {
-    const res = await axios.get(`/api/discover?source=${encodeURIComponent(source)}&min=${min}`)
+  async function renderDiscover(source = '', min = 0, q = '', verified = false) {
+    const res = await axios.get(`/api/discover?source=${encodeURIComponent(source)}&min=${min}&q=${encodeURIComponent(q)}${verified ? '&verified=1' : ''}`)
     const { trends = [], refreshing } = res.data
     app.innerHTML = `
       <nav class="mb-4 text-sm flex items-center gap-3">
@@ -488,7 +499,19 @@
         <button id="discover-refresh" class="ml-auto px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-600 text-xs"><i class="fas fa-rotate mr-1"></i>Refresh now</button>
       </nav>
       <h1 class="text-xl font-bold text-ink mb-1"><i class="fas fa-globe mr-2 text-accent"></i>Discover — Global Trends</h1>
-      <p class="text-sm text-slate-500 mb-4">What the world is searching & talking about right now, scored for PDF-guide potential. Click <b>Mine this trend</b> to run the full idea pipeline on it.</p>
+      <p class="text-sm text-slate-500 mb-4">What the world is searching & talking about right now. Each score is computed from <b>live market data</b> — real searches, real questions, and buyer-format demand verified on both Google &amp; Bing. Click <b>Mine this trend</b> to run the full idea pipeline on it.</p>
+
+      <div class="mb-4 bg-white rounded-xl border border-slate-200 p-3 flex flex-col sm:flex-row gap-3">
+        <div class="flex-1 relative">
+          <i class="fas fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"></i>
+          <input id="d-search" type="text" placeholder="Search trends…" value="${esc(q)}"
+            class="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-300 focus:border-accent focus:ring-2 focus:ring-indigo-100 outline-none text-sm">
+        </div>
+        <label class="flex items-center gap-1.5 text-sm cursor-pointer whitespace-nowrap" title="Only trends with buyer-format demand (printable/template/pdf…) confirmed on BOTH Google and Bing">
+          <input type="checkbox" id="d-verified" ${verified ? 'checked' : ''} class="accent-emerald-600">
+          <i class="fas fa-cart-shopping text-emerald-600"></i> Market-verified only
+        </label>
+      </div>
 
       <div class="mb-4 flex flex-wrap items-center gap-2">
         <span class="chip ${!source ? 'active' : ''}" data-src=""><i class="fas fa-border-all"></i>All</span>
@@ -501,7 +524,7 @@
       </div>
 
       <section class="grid gap-3">
-        ${trends.length ? trends.map(trendCard).join('') : `<div class="bg-white rounded-xl border border-dashed border-slate-300 p-10 text-center text-slate-500"><i class="fas fa-satellite-dish text-3xl text-slate-300 mb-3"></i><p>No trends stored yet — hit Refresh now.</p></div>`}
+        ${trends.length ? trends.map(trendCard).join('') : `<div class="bg-white rounded-xl border border-dashed border-slate-300 p-10 text-center text-slate-500"><i class="fas fa-satellite-dish text-3xl text-slate-300 mb-3"></i><p>No trends match these filters${verified ? ' — try turning off Market-verified' : ''}. Hit Refresh now to fetch the latest.</p></div>`}
       </section>`
 
     app.querySelector('nav a.nav')?.addEventListener('click', (e) => { e.preventDefault(); go('/') })
@@ -510,14 +533,19 @@
       btn.disabled = true
       btn.innerHTML = '<span class="spinner" style="width:12px;height:12px;border-width:2px;display:inline-block"></span> Fetching…'
       await axios.post('/api/discover/refresh', {}, { timeout: 90000 }).catch(() => {})
-      renderDiscover(source, min)
+      renderDiscover(source, min, q, verified)
     })
     document.querySelectorAll('.chip[data-src]').forEach((el) =>
-      el.addEventListener('click', () => renderDiscover(el.dataset.src, min))
+      el.addEventListener('click', () => renderDiscover(el.dataset.src, min, q, verified))
     )
+    document.getElementById('d-verified')?.addEventListener('change', (e) => renderDiscover(source, min, q, e.target.checked))
+    document.getElementById('d-search')?.addEventListener('input', (e) => {
+      clearTimeout(window.__dqT)
+      window.__dqT = setTimeout(() => renderDiscover(source, min, e.target.value, verified), 350)
+    })
     document.getElementById('d-min')?.addEventListener('input', (e) => {
       clearTimeout(window.__dminT)
-      window.__dminT = setTimeout(() => renderDiscover(source, +e.target.value), 300)
+      window.__dminT = setTimeout(() => renderDiscover(source, +e.target.value, q, verified), 300)
     })
     document.querySelectorAll('.mine-btn').forEach((b) =>
       b.addEventListener('click', async () => {

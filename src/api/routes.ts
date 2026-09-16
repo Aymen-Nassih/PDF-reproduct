@@ -218,10 +218,12 @@ api.get('/export.csv', async (c) => {
 
 const TRENDS_STALE_MS = 30 * 60_000 // refresh global trends at most every 30 min
 
-// GET /api/discover?source=&min= -> browse stored global trends (auto-refresh if stale)
+// GET /api/discover?source=&min=&q=&verified=1 -> browse stored global trends (auto-refresh if stale)
 api.get('/discover', async (c) => {
   const source = c.req.query('source') ?? ''
   const min = Math.max(0, Math.min(100, parseInt(c.req.query('min') ?? '0', 10) || 0))
+  const q = (c.req.query('q') ?? '').trim().toLowerCase()
+  const verified = c.req.query('verified') === '1'
 
   const latest = await c.env.DB.prepare('SELECT MAX(last_seen) latest FROM trends').first<any>()
   const stale = !latest?.latest || Date.now() - new Date(latest.latest + 'Z').getTime() > TRENDS_STALE_MS
@@ -233,6 +235,11 @@ api.get('/discover', async (c) => {
     where.push('(source = ? OR extra LIKE ?)')
     params.push(source, `%"${source}"%`)
   }
+  if (q) {
+    where.push('LOWER(term) LIKE ?')
+    params.push(`%${q}%`)
+  }
+  if (verified) where.push('buyer_formats > 0')
   const rows = await c.env.DB
     .prepare(`SELECT * FROM trends WHERE ${where.join(' AND ')} ORDER BY pdf_potential DESC, last_seen DESC LIMIT 120`)
     .bind(...params)
@@ -241,7 +248,8 @@ api.get('/discover', async (c) => {
   const trends = rows.results.map((r: any) => ({
     ...r,
     reasons: JSON.parse(r.reasons || '[]'),
-    extra: JSON.parse(r.extra || '{}')
+    extra: JSON.parse(r.extra || '{}'),
+    metrics: JSON.parse(r.metrics || '{}')
   }))
   return c.json({ refreshing: stale, count: trends.length, trends })
 })

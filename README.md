@@ -69,8 +69,20 @@ each with idea count, spread across seeds, avg opportunity and avg sellability.
 | GET | `/api/favorites` | Saved ideas |
 | GET | `/api/export.csv` | CSV export (respects `q`, `min`) |
 | GET | `/api/refresh-stale` | Lazy-refresh seeds older than 12h (background, waitUntil) |
-| GET | `/api/discover?source=&min=` | Global trends (auto-refreshes if >30 min stale) |
-| POST | `/api/discover/refresh` | Force re-fetch of all global trend sources |
+| GET | `/api/discover?source=&min=&q=&verified=1` | Global trends with live market metrics (auto-refreshes if >30 min stale) |
+| POST | `/api/discover/refresh` | Force re-fetch + market-probe of all global trend sources |
+
+### Discover scoring is market-data-driven
+Every global trend is **probed live against Google + Bing autocomplete** and scored from measured
+analytics — not guesses:
+- **buyer formats (40%)** — `printable/template/pdf/digital/…` demand confirmed on BOTH engines
+- **search breadth (30%)** — count of distinct real searches containing the term
+- **questions (15%)** — real question searches ("how to…", "what is…")
+- **evergreen niche (10%)** + **multi-platform presence (5%)** — small residual signals
+- News/celebrity/sports patterns are demoted ×0.5 (they don't sell PDFs)
+- Trends with verified buyer demand get +30 so they always outrank unprobed preliminary scores
+  (preliminary scores are capped at 39); each card shows the actual searches found
+- Stale trends (gone from all sources) are pruned every refresh — the feed is always current
 
 ## Global discovery sources (Discover mode)
 | Source | What it gives | Notes |
