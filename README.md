@@ -86,15 +86,17 @@ analytics — not guesses:
 - Stale trends (gone from all sources) are pruned every refresh — the feed is always current
 
 ## Global discovery sources (Discover mode)
-| Source | What it gives | Notes |
+All sources are scoped to a **rolling 7-day window** (trends older than 7 days are pruned from the feed).
+
+| Source | What it gives | 7-day window mechanism |
 |---|---|---|
-| Google Trends | Trending-now searches + traffic (`10k+`) | official RSS |
-| X/Twitter | Trending hashtags/topics | via trends24 mirror (no free X API exists) |
-| YouTube | Most-viewed videos this week (how-to/tutorial/guide queries) | search pages, server-side data + view counts |
-| Hacker News | Front-page tech topics + points | Algolia API |
-| Wikipedia | Most-viewed articles + view counts | pageviews API (~1–2 day publish lag) |
-| GitHub | Repos created this week, by stars | search API |
-| Stack Overflow | Hot questions (developer pain points) | official API |
+| Google Trends | Trending searches + traffic (`10k+`) | official RSS with `hours=168` |
+| X/Twitter | Trending hashtags/topics | trends24 mirror + DB persistence (carried-over trends age out after 7 days) |
+| YouTube | Most-viewed videos this week (how-to/tutorial/guide queries) | search pages filtered to this-week + view counts; **with `YOUTUBE_API_KEY`: official mostPopular chart** |
+| Hacker News | Top tech stories + points | Algolia API with `created_at_i > 7d` filter |
+| Wikipedia | Most-viewed articles + view counts | pageviews API, walks back up to 7 days around publish lag |
+| GitHub | Repos created this week, by stars | search API `created:>7d` |
+| Stack Overflow | Hot questions (developer pain points) | official API `sort=week` |
 | Apple Podcasts | Top 25 shows (media demand) | official charts feed |
 | Medium | Latest articles in 4 evergreen tags | RSS feeds |
 | Google News | Top stories | RSS |
@@ -146,15 +148,15 @@ See `.dev.vars.example` for step-by-step registration instructions.
   data lights up with a Serper key or from friendlier IPs.
 - **Etsy/Amazon SERP scraping is IP-blocked** — instead, sellability uses cross-engine format-keyword
   confirmation, and each product idea ships marketplace search deep-links for manual competition checks
-- Search-volume estimates (DataForSEO) not wired — demand is currently a query-count proxy
+- Search-volume estimates: **wired via DataForSEO** (set the secrets, see table above); falls back to a query-count proxy when no key is configured
 - LLM-written outline text (outline structure is algorithmic; plug in any LLM API later)
 - Auth/multi-user (single-user by design)
 
 ## Deployment
-- **Platform**: Cloudflare Pages (Hono + D1, hosted-deploy compatible: no KV, no cron triggers)
-- **Status**: ⏳ Not yet deployed
-- Deploy commands: `npm run build` → `wrangler pages deploy dist` (D1 migrations:
-  `npm run db:migrate:prod` after creating the production database)
+- **Platform**: Cloudflare Workers for Platform via Genspark hosted deploy (Hono + D1; no KV, no cron triggers)
+- **Status**: ✅ Live at https://0abbd019-e3d0-4754-a0e8-16f9104003ed.vip.gensparksite.com
+- **Production secrets set**: `YOUTUBE_API_KEY`, `DATAFORSEO_LOGIN`, `DATAFORSEO_PASSWORD` (write-only)
+- Deploy flow: `gsk hosted deploy` (user-approval handshake) → `gsk hosted action_wait`; secrets via `gsk hosted secret_put`
 
 ## Development
 ```bash
