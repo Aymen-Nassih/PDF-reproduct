@@ -444,6 +444,100 @@
     section.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
+  // ---------- global discover view ----------
+  const SOURCE_META = {
+    google: { label: 'Google Trends', icon: 'fab fa-google', color: '#4285f4' },
+    twitter: { label: 'X / Twitter', icon: 'fab fa-x-twitter', color: '#0f172a' },
+    hackernews: { label: 'Hacker News', icon: 'fab fa-hacker-news', color: '#ff6600' },
+    wikipedia: { label: 'Wikipedia', icon: 'fab fa-wikipedia-w', color: '#334155' },
+    github: { label: 'GitHub', icon: 'fab fa-github', color: '#24292f' },
+    googlenews: { label: 'Google News', icon: 'fas fa-newspaper', color: '#0f9d58' }
+  }
+
+  function trendCard(t) {
+    const srcs = (t.extra.sources || [t.source])
+    const score = t.pdf_potential
+    const color = score >= 70 ? '#16a34a' : score >= 50 ? '#6366f1' : score >= 35 ? '#d97706' : '#94a3b8'
+    return `
+    <article class="idea-card fade-up bg-white rounded-xl border border-slate-200 p-4 flex gap-4 items-start">
+      <div class="score-ring" style="--score:${score};--ring-color:${color}" data-tip="PDF potential ${score}/100\n${esc((t.reasons || []).join('\n'))}"><span>${score}</span></div>
+      <div class="min-w-0 flex-1">
+        <div class="flex items-center gap-2 flex-wrap">
+          <h3 class="font-semibold text-ink leading-snug">${esc(t.term)}</h3>
+          ${srcs.map((s) => `<span class="badge badge-neutral" style="color:${SOURCE_META[s]?.color}"><i class="${SOURCE_META[s]?.icon || 'fas fa-circle'}"></i>${SOURCE_META[s]?.label || s}</span>`).join('')}
+        </div>
+        <p class="text-xs text-slate-500 mt-1">
+          ${t.traffic ? `<i class="fas fa-signal mr-1"></i>${esc(t.traffic)} · ` : ''}
+          first seen ${esc((t.first_seen || '').slice(5, 16))} · seen ${t.seen_count}×
+        </p>
+        ${t.url ? `<a href="${esc(t.url)}" target="_blank" rel="noopener" class="text-xs text-accent hover:underline"><i class="fas fa-arrow-up-right-from-square mr-1"></i>Source link</a>` : ''}
+      </div>
+      <button class="mine-btn no-print shrink-0 px-3 py-2 rounded-lg bg-accent text-white text-xs font-semibold hover:bg-indigo-500 disabled:opacity-50" data-term="${esc(t.term)}">
+        <i class="fas fa-bolt mr-1"></i>Mine this trend
+      </button>
+    </article>`
+  }
+
+  async function renderDiscover(source = '', min = 0) {
+    const res = await axios.get(`/api/discover?source=${encodeURIComponent(source)}&min=${min}`)
+    const { trends = [], refreshing } = res.data
+    app.innerHTML = `
+      <nav class="mb-4 text-sm flex items-center gap-3">
+        <a href="/" class="nav text-accent hover:underline"><i class="fas fa-arrow-left mr-1"></i>Dashboard</a>
+        ${refreshing ? '<span class="text-slate-400 flex items-center gap-2"><span class="spinner" style="width:12px;height:12px;border-width:2px"></span>Refreshing global sources…</span>' : ''}
+        <button id="discover-refresh" class="ml-auto px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-600 text-xs"><i class="fas fa-rotate mr-1"></i>Refresh now</button>
+      </nav>
+      <h1 class="text-xl font-bold text-ink mb-1"><i class="fas fa-globe mr-2 text-accent"></i>Discover — Global Trends</h1>
+      <p class="text-sm text-slate-500 mb-4">What the world is searching & talking about right now, scored for PDF-guide potential. Click <b>Mine this trend</b> to run the full idea pipeline on it.</p>
+
+      <div class="mb-4 flex flex-wrap items-center gap-2">
+        <span class="chip ${!source ? 'active' : ''}" data-src=""><i class="fas fa-border-all"></i>All</span>
+        ${Object.entries(SOURCE_META).map(([k, m]) => `<span class="chip ${source === k ? 'active' : ''}" data-src="${k}"><i class="${m.icon}"></i>${m.label}</span>`).join('')}
+        <label class="flex items-center gap-1.5 text-sm ml-auto">
+          Min potential
+          <input type="range" id="d-min" min="0" max="100" step="5" value="${min}" class="accent-indigo-600 w-24">
+          <span class="w-8 text-slate-600">${min}</span>
+        </label>
+      </div>
+
+      <section class="grid gap-3">
+        ${trends.length ? trends.map(trendCard).join('') : `<div class="bg-white rounded-xl border border-dashed border-slate-300 p-10 text-center text-slate-500"><i class="fas fa-satellite-dish text-3xl text-slate-300 mb-3"></i><p>No trends stored yet — hit Refresh now.</p></div>`}
+      </section>`
+
+    app.querySelector('nav a.nav')?.addEventListener('click', (e) => { e.preventDefault(); go('/') })
+    document.getElementById('discover-refresh')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget
+      btn.disabled = true
+      btn.innerHTML = '<span class="spinner" style="width:12px;height:12px;border-width:2px;display:inline-block"></span> Fetching…'
+      await axios.post('/api/discover/refresh', {}, { timeout: 90000 }).catch(() => {})
+      renderDiscover(source, min)
+    })
+    document.querySelectorAll('.chip[data-src]').forEach((el) =>
+      el.addEventListener('click', () => renderDiscover(el.dataset.src, min))
+    )
+    document.getElementById('d-min')?.addEventListener('input', (e) => {
+      clearTimeout(window.__dminT)
+      window.__dminT = setTimeout(() => renderDiscover(source, +e.target.value), 300)
+    })
+    document.querySelectorAll('.mine-btn').forEach((b) =>
+      b.addEventListener('click', async () => {
+        b.disabled = true
+        b.innerHTML = '<span class="spinner" style="width:12px;height:12px;border-width:2px;display:inline-block"></span> Mining…'
+        try {
+          const res = await axios.post('/api/search', { seed: b.dataset.term }, { timeout: 120000 })
+          if (res.data.error && res.data.error !== 'Fresh data already exists') throw new Error(res.data.error)
+          b.innerHTML = '<i class="fas fa-check mr-1"></i>Mined! View →'
+          b.classList.remove('bg-accent', 'hover:bg-indigo-500')
+          b.classList.add('bg-emerald-600')
+          b.addEventListener('click', () => { state.q = b.dataset.term; go('/') }, { once: true })
+        } catch (err) {
+          b.innerHTML = '<i class="fas fa-triangle-exclamation mr-1"></i>Failed'
+          setTimeout(() => { b.disabled = false; b.innerHTML = '<i class="fas fa-bolt mr-1"></i>Mine this trend' }, 2500)
+        }
+      })
+    )
+  }
+
   // ---------- trending & favorites views ----------
   async function renderList(title, icon, url) {
     const res = await axios.get(url)
@@ -475,6 +569,7 @@
   function render() {
     chart?.destroy(); chart = null
     if (state.view === 'idea' && state.ideaId) renderIdea()
+    else if (state.view === 'discover') renderDiscover()
     else if (state.view === 'words') renderWords()
     else if (state.view === 'trending') renderList('Trending Now', 'fa-arrow-trend-up', '/api/trending')
     else if (state.view === 'favorites') renderList('Favorites', 'fa-star', '/api/favorites')

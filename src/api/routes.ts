@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { runPipeline } from '../pipeline'
+import { refreshGlobalTrends } from '../pipeline/discover'
 
 type Bindings = { DB: D1Database }
 
@@ -211,6 +212,44 @@ api.get('/export.csv', async (c) => {
       'Content-Disposition': 'attachment; filename="pdf-trend-ideas.csv"'
     }
   })
+})
+
+// --- Global discovery: what's trending worldwide across platforms ---
+
+const TRENDS_STALE_MS = 30 * 60_000 // refresh global trends at most every 30 min
+
+// GET /api/discover?source=&min= -> browse stored global trends (auto-refresh if stale)
+api.get('/discover', async (c) => {
+  const source = c.req.query('source') ?? ''
+  const min = Math.max(0, Math.min(100, parseInt(c.req.query('min') ?? '0', 10) || 0))
+
+  const latest = await c.env.DB.prepare('SELECT MAX(last_seen) latest FROM trends').first<any>()
+  const stale = !latest?.latest || Date.now() - new Date(latest.latest + 'Z').getTime() > TRENDS_STALE_MS
+  if (stale) c.executionCtx.waitUntil(refreshGlobalTrends(c.env.DB).catch(() => {}))
+
+  const where: string[] = ['pdf_potential >= ?']
+  const params: any[] = [min]
+  if (source) {
+    where.push('(source = ? OR extra LIKE ?)')
+    params.push(source, `%"${source}"%`)
+  }
+  const rows = await c.env.DB
+    .prepare(`SELECT * FROM trends WHERE ${where.join(' AND ')} ORDER BY pdf_potential DESC, last_seen DESC LIMIT 120`)
+    .bind(...params)
+    .all()
+
+  const trends = rows.results.map((r: any) => ({
+    ...r,
+    reasons: JSON.parse(r.reasons || '[]'),
+    extra: JSON.parse(r.extra || '{}')
+  }))
+  return c.json({ refreshing: stale, count: trends.length, trends })
+})
+
+// POST /api/discover/refresh -> force re-fetch of all global sources
+api.post('/discover/refresh', async (c) => {
+  const result = await refreshGlobalTrends(c.env.DB)
+  return c.json(result)
 })
 
 // Lazy refresh: stale seeds (>12h) re-run pipeline in background on any browse

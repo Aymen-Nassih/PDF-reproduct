@@ -4,6 +4,12 @@ A self-hosted clone of "PDF Trend Lab" — a trending-topic / problem-discovery 
 real questions people search for, clusters them into PDF-guide ideas, and scores each idea for
 **opportunity, difficulty, competition, interest, momentum and buyer intent**.
 
+Two modes:
+1. **Dashboard (seed mode)** — you enter a niche seed; the engine mines it.
+2. **Discover (global mode)** — no seed needed: the app pulls what's trending worldwide across
+   Google Trends, X/Twitter, Hacker News, Wikipedia, GitHub and Google News, scores each trend for
+   PDF-guide potential, and lets you one-click **Mine this trend** into the full seed pipeline.
+
 Built for personal use. No paid APIs required.
 
 ## Project Overview
@@ -63,6 +69,25 @@ each with idea count, spread across seeds, avg opportunity and avg sellability.
 | GET | `/api/favorites` | Saved ideas |
 | GET | `/api/export.csv` | CSV export (respects `q`, `min`) |
 | GET | `/api/refresh-stale` | Lazy-refresh seeds older than 12h (background, waitUntil) |
+| GET | `/api/discover?source=&min=` | Global trends (auto-refreshes if >30 min stale) |
+| POST | `/api/discover/refresh` | Force re-fetch of all global trend sources |
+
+## Global discovery sources (Discover mode)
+| Source | What it gives | Notes |
+|---|---|---|
+| Google Trends | Trending-now searches + traffic (`10k+`) | official RSS |
+| X/Twitter | Trending hashtags/topics | via trends24 mirror (no free X API exists) |
+| Hacker News | Front-page tech topics + points | Algolia API |
+| Wikipedia | Most-viewed articles + view counts | pageviews API (~1–2 day publish lag) |
+| GitHub | Repos created this week, by stars | search API |
+| Google News | Top stories | RSS |
+| Amazon | *(deep-links only)* | pages are JS-rendered shells server-side — buyer intent instead flows through the cross-engine format-keyword signal + marketplace competition links |
+| LinkedIn | *(not feasible)* | no public/API access without partner program |
+
+Each trend's **PDF potential** score: multi-platform presence (trending on 2+ sources at once) +
+topic-phrase shape + search volume + evergreen-niche match + live autocomplete probe (do buyers
+append `printable/template/pdf` to this term?) − news/celebrity/sports penalty. Hover any score for
+the full reason list.
 
 ## Data model (D1)
 - `seeds(keyword, status, fetched_at)` — freshness cache + pipeline lock
