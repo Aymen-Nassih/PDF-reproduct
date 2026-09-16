@@ -448,10 +448,14 @@
   const SOURCE_META = {
     google: { label: 'Google Trends', icon: 'fab fa-google', color: '#4285f4' },
     twitter: { label: 'X / Twitter', icon: 'fab fa-x-twitter', color: '#0f172a' },
+    youtube: { label: 'YouTube', icon: 'fab fa-youtube', color: '#ff0000' },
     hackernews: { label: 'Hacker News', icon: 'fab fa-hacker-news', color: '#ff6600' },
     wikipedia: { label: 'Wikipedia', icon: 'fab fa-wikipedia-w', color: '#334155' },
     github: { label: 'GitHub', icon: 'fab fa-github', color: '#24292f' },
-    googlenews: { label: 'Google News', icon: 'fas fa-newspaper', color: '#0f9d58' }
+    stackoverflow: { label: 'Stack Overflow', icon: 'fab fa-stack-overflow', color: '#f48024' },
+    googlenews: { label: 'Google News', icon: 'fas fa-newspaper', color: '#0f9d58' },
+    applepodcasts: { label: 'Podcasts', icon: 'fas fa-podcast', color: '#872ec4' },
+    medium: { label: 'Medium', icon: 'fab fa-medium', color: '#000000' }
   }
 
   function trendCard(t) {
@@ -478,7 +482,9 @@
           <span data-tip="Distinct real searches containing this term, found live on Google + Bing autocomplete"><i class="fas fa-magnifying-glass mr-1 text-slate-400"></i><b>${m.breadth}</b> real searches</span>
           <span data-tip="Real questions people ask about this trend"><i class="fas fa-circle-question mr-1 text-slate-400"></i><b>${m.questionCount}</b> questions</span>
           <span data-tip="Marketplace format words (printable/template/pdf…) confirmed on BOTH Google and Bing — real buyer demand"><i class="fas fa-tag mr-1 text-slate-400"></i><b>${(m.buyerFormats || []).length}</b> buyer formats</span>
-        </div>` : `<p class="text-xs text-slate-400 mt-2 italic">Not market-probed yet — preliminary score.</p>`}
+          ${(m.youtubeSuggestions || []).length ? `<span data-tip="People search this on YouTube: ${esc((m.youtubeSuggestions || []).slice(0, 3).join('; '))}"><i class="fab fa-youtube mr-1 text-red-500"></i><b>${m.youtubeSuggestions.length}</b> video searches</span>` : ''}
+          ${(m.ebaySuggestions || []).length ? `<span data-tip="People search this on eBay: ${esc((m.ebaySuggestions || []).slice(0, 3).join('; '))}"><i class="fas fa-bag-shopping mr-1 text-blue-500"></i><b>${m.ebaySuggestions.length}</b> commerce searches</span>` : ''}
+        </div>` : `<p class="text-xs text-slate-400 mt-2 italic">Not market-probed yet — preliminary score. <button class="probe-btn text-accent hover:underline font-medium not-italic" data-id="${t.id}"><i class="fas fa-satellite-dish mr-1"></i>Probe market data</button></p>`}
         ${(m.buyerFormats || []).length ? `<div class="flex flex-wrap gap-1 mt-2">${m.buyerFormats.map((f) => `<span class="text-[0.6875rem] bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full">+ ${esc(f)}</span>`).join('')}</div>` : ''}
         ${searches.length ? `<details class="mt-2 text-xs"><summary class="cursor-pointer text-slate-400 hover:text-slate-600">What people actually search (${m.breadth || searches.length})</summary><ul class="mt-1 space-y-0.5 text-slate-600">${searches.map((s) => `<li class="flex gap-1.5"><i class="fas fa-angle-right text-slate-300 mt-0.5"></i>${esc(s)}</li>`).join('')}</ul></details>` : ''}
         ${t.url ? `<a href="${esc(t.url)}" target="_blank" rel="noopener" class="text-xs text-accent hover:underline"><i class="fas fa-arrow-up-right-from-square mr-1"></i>Source link</a>` : ''}
@@ -547,6 +553,19 @@
       clearTimeout(window.__dminT)
       window.__dminT = setTimeout(() => renderDiscover(source, +e.target.value, q, verified), 300)
     })
+    document.querySelectorAll('.probe-btn').forEach((b) =>
+      b.addEventListener('click', async () => {
+        b.disabled = true
+        b.innerHTML = '<span class="spinner" style="width:10px;height:10px;border-width:2px;display:inline-block"></span> Probing…'
+        try {
+          await axios.post(`/api/trends/${b.dataset.id}/probe`, {}, { timeout: 60000 })
+          renderDiscover(source, min, q, verified)
+        } catch {
+          b.innerHTML = '<i class="fas fa-triangle-exclamation mr-1"></i>Failed'
+          setTimeout(() => { b.disabled = false; b.innerHTML = '<i class="fas fa-satellite-dish mr-1"></i>Probe market data' }, 2500)
+        }
+      })
+    )
     document.querySelectorAll('.mine-btn').forEach((b) =>
       b.addEventListener('click', async () => {
         b.disabled = true

@@ -4,7 +4,17 @@ import { fetchText, fetchJson, mapLimit } from './http'
 
 export interface GlobalTrend {
   term: string
-  source: 'google' | 'twitter' | 'hackernews' | 'wikipedia' | 'github' | 'googlenews'
+  source:
+    | 'google'
+    | 'twitter'
+    | 'hackernews'
+    | 'wikipedia'
+    | 'github'
+    | 'googlenews'
+    | 'youtube'
+    | 'applepodcasts'
+    | 'stackoverflow'
+    | 'medium'
   traffic?: string
   url?: string
 }
@@ -134,14 +144,133 @@ export async function fetchGoogleNews(): Promise<GlobalTrend[]> {
   return out
 }
 
+// --- YouTube: most-viewed videos this week for high-intent queries ---
+// (The /feed/trending page returns an empty personalized shell for anonymous
+// datacenter clients; search results pages carry full server-side data.)
+// sp=CAMSBAgCEAE = uploaded this week + sorted by view count.
+const YT_QUERIES = ['how to', 'tutorial', 'beginner guide']
+
+function parseYouTubeSearch(html: string): GlobalTrend[] {
+  const start = html.indexOf('var ytInitialData = ')
+  if (start < 0) return []
+  const i = start + 'var ytInitialData = '.length
+  const jsonEnd = html.indexOf(';</script>', i)
+  if (jsonEnd < 0) return []
+  try {
+    const data = JSON.parse(html.slice(i, jsonEnd))
+    const out: GlobalTrend[] = []
+    const seen = new Set<string>()
+    const stack: any[] = [data]
+    while (stack.length && out.length < 15) {
+      const node = stack.pop()
+      if (!node || typeof node !== 'object') continue
+      if (Array.isArray(node)) {
+        stack.push(...node)
+        continue
+      }
+      const vr = node.videoRenderer
+      if (vr?.videoId && vr?.title?.runs?.[0]?.text) {
+        const title = String(vr.title.runs[0].text).toLowerCase().trim()
+        if (title.length > 8 && !seen.has(title)) {
+          seen.add(title)
+          const views = vr.viewCountText?.simpleText ?? vr.shortViewCountText?.simpleText ?? ''
+          out.push({
+            term: title,
+            source: 'youtube',
+            traffic: views || undefined,
+            url: `https://www.youtube.com/watch?v=${vr.videoId}`
+          })
+        }
+      }
+      for (const k of Object.keys(node)) stack.push(node[k])
+    }
+    return out
+  } catch {
+    return []
+  }
+}
+
+export async function fetchYouTubeTrending(): Promise<GlobalTrend[]> {
+  const results = await mapLimit(YT_QUERIES, 2, async (q) => {
+    const html = await fetchText(
+      `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}&sp=CAMSBAgCEAE%253D`,
+      10000
+    )
+    return html ? parseYouTubeSearch(html) : []
+  })
+  return results.flat()
+}
+
+// --- Apple Podcasts top shows (media demand signal) ---
+export async function fetchApplePodcasts(): Promise<GlobalTrend[]> {
+  const data = await fetchJson<any>(
+    'https://rss.applemarketingtools.com/api/v2/us/podcasts/top/25/podcasts.json',
+    8000
+  )
+  const results = data?.feed?.results ?? []
+  return results
+    .filter((r: any) => r?.name)
+    .map((r: any) => ({
+      term: String(r.name).toLowerCase(),
+      source: 'applepodcasts' as const,
+      traffic: r.artistName ? `by ${r.artistName}` : undefined,
+      url: r.url
+    }))
+}
+
+// --- Stack Overflow hot questions (developer pain points) ---
+export async function fetchStackOverflow(): Promise<GlobalTrend[]> {
+  const data = await fetchJson<any>(
+    'https://api.stackexchange.com/2.3/questions?order=desc&sort=hot&site=stackoverflow&pagesize=20&filter=withbody',
+    8000
+  )
+  const items = data?.items ?? []
+  return items
+    .filter((q: any) => q?.title)
+    .map((q: any) => ({
+      term: xmlUnescape(String(q.title)).toLowerCase(),
+      source: 'stackoverflow' as const,
+      traffic: `${q.score ?? 0} pts · ${q.answer_count ?? 0} answers`,
+      url: q.link
+    }))
+}
+
+// --- Medium topic feeds (what people read about) ---
+const MEDIUM_TAGS = ['productivity', 'personal-finance', 'self-improvement', 'technology']
+
+export async function fetchMedium(): Promise<GlobalTrend[]> {
+  const results = await mapLimit(MEDIUM_TAGS, 2, async (tag) => {
+    const xml = await fetchText(`https://medium.com/feed/tag/${tag}`, 8000)
+    if (!xml) return [] as GlobalTrend[]
+    const out: GlobalTrend[] = []
+    const items = xml.split('<item>').slice(1, 8)
+    for (const item of items) {
+      const title = item.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/)?.[1]
+      if (title) {
+        out.push({
+          term: xmlUnescape(title).trim().toLowerCase(),
+          source: 'medium' as const,
+          url: item.match(/<link>([\s\S]*?)<\/link>/)?.[1]?.trim()
+        })
+      }
+    }
+    return out
+  })
+  return results.flat()
+}
+
 export async function fetchAllGlobal(): Promise<GlobalTrend[]> {
-  const [google, twitter, hn, wiki, gh, news] = await Promise.all([
+  const [google, twitter, hn, wiki, gh, news, youtube, podcasts, stackoverflow, medium] = await Promise.all([
     fetchGoogleTrendsNow().catch(() => []),
     fetchTwitterTrends().catch(() => []),
     fetchHackerNews().catch(() => []),
     fetchWikipediaTop().catch(() => []),
     fetchGitHubTrending().catch(() => []),
-    fetchGoogleNews().catch(() => [])
+    fetchGoogleNews().catch(() => []),
+    fetchYouTubeTrending().catch(() => []),
+    fetchApplePodcasts().catch(() => []),
+    fetchStackOverflow().catch(() => []),
+    fetchMedium().catch(() => [])
   ])
-  return [...google, ...twitter, ...hn, ...wiki, ...gh, ...news]
+  return [...google, ...twitter, ...hn, ...wiki, ...gh, ...news, ...youtube, ...podcasts, ...stackoverflow, ...medium]
 }

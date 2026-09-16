@@ -4,6 +4,7 @@ import { expandSeed } from '../sources/autocomplete'
 import { expandSeedBing } from '../sources/bing'
 import { getTrends } from '../sources/trends'
 import { mineReddit } from '../sources/reddit'
+import { youtubeSuggest, ebaySuggest } from '../sources/suggest'
 import { clusterTexts, tokenize } from './clustering'
 import { computeScores } from './scoring'
 import { analyzeMarket, computeSellability, generateProductIdea } from './market'
@@ -111,19 +112,18 @@ export async function runPipeline(seed: string, db: D1Database): Promise<{ ideas
     .run()
 
   try {
-    // 1. Pull all sources in parallel
-    const [ac, trends, reddit, bing] = await Promise.all([
+    // 1. Pull all sources in parallel (search engines + video + commerce)
+    const [ac, trends, reddit, bing, ytSug, ebSug] = await Promise.all([
       expandSeed(cleanSeed),
       getTrends(cleanSeed),
       mineReddit(cleanSeed),
-      expandSeedBing(cleanSeed)
+      expandSeedBing(cleanSeed),
+      youtubeSuggest(cleanSeed),
+      ebaySuggest(cleanSeed)
     ])
 
     const allTexts = [...new Set([...ac.suggestions, ...reddit.posts.map((p) => p.title.toLowerCase())])]
     const distinctQueries = allTexts.length + (trends.ok ? trends.risingQueries.length : 0)
-
-    // Market signals for the whole seed (format-keyword demand across engines)
-    const marketSeed = analyzeMarket(cleanSeed, ac.suggestions, bing.suggestions, ac.suggestions)
 
     // 2. Cluster into ideas — seed tokens are excluded from similarity
     // (they appear in nearly every suggestion and would merge all clusters)
@@ -150,7 +150,8 @@ export async function runPipeline(seed: string, db: D1Database): Promise<{ ideas
       const id = await hashId(cleanSeed + ':' + cluster.centroidTokens.slice(0, 4).join(':'))
 
       // Market-intent for THIS cluster + sellability + concrete PDF product idea
-      const market = analyzeMarket(cleanSeed, ac.suggestions, bing.suggestions, texts)
+      // YouTube + eBay seed-level suggestions flow into sellability (video + commerce demand)
+      const market = analyzeMarket(cleanSeed, ac.suggestions, bing.suggestions, texts, ytSug, ebSug)
       const sell = computeSellability(market, texts, scores.demand, scores.buyerIntent)
       const product = generateProductIdea(title, texts, market)
 

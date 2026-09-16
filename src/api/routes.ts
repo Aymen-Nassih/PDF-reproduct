@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { runPipeline } from '../pipeline'
-import { refreshGlobalTrends } from '../pipeline/discover'
+import { refreshGlobalTrends, probeSingleTrend } from '../pipeline/discover'
 
 type Bindings = { DB: D1Database }
 
@@ -258,6 +258,37 @@ api.get('/discover', async (c) => {
 api.post('/discover/refresh', async (c) => {
   const result = await refreshGlobalTrends(c.env.DB)
   return c.json(result)
+})
+
+// POST /api/trends/:id/probe -> on-demand market probe for a single stored trend
+api.post('/trends/:id/probe', async (c) => {
+  const id = c.req.param('id')
+  const row = await c.env.DB.prepare('SELECT * FROM trends WHERE id = ?').bind(id).first<any>()
+  if (!row) return c.json({ error: 'Trend not found' }, 404)
+
+  const extra = JSON.parse(row.extra || '{}')
+  const result = await probeSingleTrend(row.term, extra.sources ?? [row.source], row.traffic ?? undefined)
+
+  await c.env.DB
+    .prepare(
+      `UPDATE trends SET pdf_potential = ?, reasons = ?, metrics = ?, buyer_formats = ?, last_seen = datetime('now') WHERE id = ?`
+    )
+    .bind(
+      result.score,
+      JSON.stringify(result.reasons),
+      JSON.stringify(result.metrics),
+      result.metrics.buyerFormats.length,
+      id
+    )
+    .run()
+
+  return c.json({
+    id,
+    term: row.term,
+    pdf_potential: result.score,
+    reasons: result.reasons,
+    metrics: result.metrics
+  })
 })
 
 // Lazy refresh: stale seeds (>12h) re-run pipeline in background on any browse

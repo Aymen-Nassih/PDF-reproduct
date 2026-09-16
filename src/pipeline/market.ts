@@ -50,6 +50,8 @@ export interface MarketSignals {
   bingFormats: number // format-keyword hits across Bing suggestions
   crossEngineFormats: string[] // format keywords confirmed by BOTH engines
   bingSuggestions: number
+  youtubeSuggestions: string[] // real YouTube searches for this seed
+  ebaySuggestions: string[] // real eBay purchase-searches for this seed
   audiences: string[]
 }
 
@@ -57,7 +59,9 @@ export function analyzeMarket(
   seed: string,
   googleTexts: string[],
   bingTexts: string[],
-  clusterTexts: string[]
+  clusterTexts: string[],
+  youtubeTexts: string[] = [],
+  ebayTexts: string[] = []
 ): MarketSignals {
   const seedFormats = FORMAT_KEYWORDS.filter((f) => !seed.includes(f))
   const hits = (texts: string[]) =>
@@ -85,6 +89,8 @@ export function analyzeMarket(
     bingFormats,
     crossEngineFormats: [...cross],
     bingSuggestions: bingTexts.length,
+    youtubeSuggestions: youtubeTexts,
+    ebaySuggestions: ebayTexts,
     audiences: [...audienceSet]
   }
 }
@@ -105,24 +111,34 @@ export function computeSellability(
 ): Sellability {
   const reasons: string[] = []
 
-  // Format demand: format words confirmed across engines (0-40)
+  // Format demand: format words confirmed across engines (0-35)
   const fmtCount = market.googleFormats + market.bingFormats
-  const fmtScore = Math.min(40, (fmtCount / 40) * 40)
+  const fmtScore = Math.min(35, (fmtCount / 40) * 35)
   reasons.push(`${market.googleFormats} Google + ${market.bingFormats} Bing suggestions contain marketplace format words (printable/template/pdf…)`)
 
-  // Cross-engine confirmation bonus (0-25)
-  const crossScore = Math.min(25, market.crossEngineFormats.length * 5)
+  // Cross-engine confirmation bonus (0-20)
+  const crossScore = Math.min(20, market.crossEngineFormats.length * 4)
   if (market.crossEngineFormats.length)
     reasons.push(`Cross-engine confirmed formats: ${market.crossEngineFormats.join(', ')}`)
 
-  // Buyer intent carried over (0-20)
-  const intentScore = (buyerIntent / 100) * 20
+  // Buyer intent carried over (0-15)
+  const intentScore = (buyerIntent / 100) * 15
 
   // Audience specificity (0-15): a defined audience = a defined buyer
   const audienceScore = Math.min(15, market.audiences.length * 7.5)
   if (market.audiences.length) reasons.push(`Clear buyer audience: ${market.audiences.join(', ')}`)
 
-  const score = Math.round(Math.min(100, fmtScore + crossScore + intentScore + audienceScore))
+  // YouTube demand (0-8): people searching video content for this niche
+  const ytScore = Math.min(8, market.youtubeSuggestions.length * 1.5)
+  if (market.youtubeSuggestions.length)
+    reasons.push(`YouTube search demand: "${market.youtubeSuggestions[0]}" (+${market.youtubeSuggestions.length - 1} more)`)
+
+  // eBay demand (0-7): people already searching to BUY related products
+  const ebayScore = Math.min(7, market.ebaySuggestions.length * 1.2)
+  if (market.ebaySuggestions.length)
+    reasons.push(`eBay purchase-search demand: "${market.ebaySuggestions[0]}" (+${market.ebaySuggestions.length - 1} more)`)
+
+  const score = Math.round(Math.min(100, fmtScore + crossScore + intentScore + audienceScore + ytScore + ebayScore))
   const grade: Sellability['grade'] = score >= 70 ? 'A' : score >= 50 ? 'B' : score >= 30 ? 'C' : 'D'
   const label =
     grade === 'A' ? 'Strong seller' : grade === 'B' ? 'Likely seller' : grade === 'C' ? 'Niche bet' : 'Research more'

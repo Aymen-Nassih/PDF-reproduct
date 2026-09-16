@@ -71,6 +71,7 @@ each with idea count, spread across seeds, avg opportunity and avg sellability.
 | GET | `/api/refresh-stale` | Lazy-refresh seeds older than 12h (background, waitUntil) |
 | GET | `/api/discover?source=&min=&q=&verified=1` | Global trends with live market metrics (auto-refreshes if >30 min stale) |
 | POST | `/api/discover/refresh` | Force re-fetch + market-probe of all global trend sources |
+| POST | `/api/trends/:id/probe` | On-demand market probe (Google/Bing/YouTube/eBay) for one trend |
 
 ### Discover scoring is market-data-driven
 Every global trend is **probed live against Google + Bing autocomplete** and scored from measured
@@ -89,12 +90,24 @@ analytics — not guesses:
 |---|---|---|
 | Google Trends | Trending-now searches + traffic (`10k+`) | official RSS |
 | X/Twitter | Trending hashtags/topics | via trends24 mirror (no free X API exists) |
+| YouTube | Most-viewed videos this week (how-to/tutorial/guide queries) | search pages, server-side data + view counts |
 | Hacker News | Front-page tech topics + points | Algolia API |
 | Wikipedia | Most-viewed articles + view counts | pageviews API (~1–2 day publish lag) |
 | GitHub | Repos created this week, by stars | search API |
+| Stack Overflow | Hot questions (developer pain points) | official API |
+| Apple Podcasts | Top 25 shows (media demand) | official charts feed |
+| Medium | Latest articles in 4 evergreen tags | RSS feeds |
 | Google News | Top stories | RSS |
-| Amazon | *(deep-links only)* | pages are JS-rendered shells server-side — buyer intent instead flows through the cross-engine format-keyword signal + marketplace competition links |
-| LinkedIn | *(not feasible)* | no public/API access without partner program |
+| Amazon | *(deep-links only)* | pages are JS-rendered shells server-side |
+| Pinterest / TikTok / Product Hunt / Quora / LinkedIn | *(blocked)* | 403/401 from datacenter IPs; no keyless API — documented, not silently skipped |
+
+### Market probes run everywhere
+- **Per trend (Discover)**: Google + Bing + **YouTube** + **eBay** autocomplete — search breadth,
+  real questions, cross-engine buyer formats, video demand, commerce demand. Top 40 trends probed
+  per refresh (evergreen/how-to prioritized); any trend can be probed on demand via
+  `POST /api/trends/:id/probe` ("Probe market data" button on unprobed cards).
+- **Per seed (Dashboard)**: sellability now includes YouTube search demand (+8) and eBay
+  purchase-search demand (+7) alongside Google/Bing format demand.
 
 Each trend's **PDF potential** score: multi-platform presence (trending on 2+ sources at once) +
 topic-phrase shape + search volume + evergreen-niche match + live autocomplete probe (do buyers

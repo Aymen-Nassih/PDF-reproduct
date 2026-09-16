@@ -7,7 +7,8 @@
 // Small residual weights: evergreen niche match + multi-platform presence.
 // News/celebrity/sports patterns get demoted because they don't sell PDFs.
 import { fetchAllGlobal, type GlobalTrend } from '../sources/global'
-import { fetchJson, mapLimit } from '../sources/http'
+import { mapLimit } from '../sources/http'
+import { googleSuggest, bingSuggest, youtubeSuggest, ebaySuggest } from '../sources/suggest'
 import { FORMAT_KEYWORDS } from './market'
 
 const clamp = (v: number, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, Math.round(v)))
@@ -48,23 +49,17 @@ export interface TrendMetrics {
   googleSuggestions: string[]
   bingSuggestions: string[]
   questions: string[]
-}
-
-async function googleSuggest(q: string): Promise<string[]> {
-  const data = await fetchJson<any>(
-    `https://suggestqueries.google.com/complete/search?client=firefox&hl=en&q=${encodeURIComponent(q)}`,
-    5000
-  )
-  return Array.isArray(data?.[1]) ? data[1].map((s: any) => String(s).toLowerCase()) : []
-}
-
-async function bingSuggest(q: string): Promise<string[]> {
-  const data = await fetchJson<any>(`https://api.bing.com/osjson.aspx?query=${encodeURIComponent(q)}`, 5000)
-  return Array.isArray(data?.[1]) ? data[1].map((s: any) => String(s).toLowerCase()) : []
+  youtubeSuggestions: string[] // real YouTube searches for this term
+  ebaySuggestions: string[] // real eBay purchase searches for this term
 }
 
 async function probeTrend(term: string): Promise<TrendMetrics> {
-  const [g, b] = await Promise.all([googleSuggest(term), bingSuggest(term)])
+  const [g, b, yt, eb] = await Promise.all([
+    googleSuggest(term),
+    bingSuggest(term),
+    youtubeSuggest(term),
+    ebaySuggest(term)
+  ])
   const all = [...new Set([...g, ...b])].filter((s) => s.includes(term.split(' ')[0]))
   const gFormats = FORMAT_KEYWORDS.filter((f) => g.some((s) => s.includes(f)))
   const bFormats = FORMAT_KEYWORDS.filter((f) => b.some((s) => s.includes(f)))
@@ -77,7 +72,9 @@ async function probeTrend(term: string): Promise<TrendMetrics> {
     buyerFormats,
     googleSuggestions: g.slice(0, 6),
     bingSuggestions: b.slice(0, 6),
-    questions
+    questions,
+    youtubeSuggestions: yt.slice(0, 6),
+    ebaySuggestions: eb.slice(0, 6)
   }
 }
 
@@ -88,7 +85,9 @@ const UNPROBED: TrendMetrics = {
   buyerFormats: [],
   googleSuggestions: [],
   bingSuggestions: [],
-  questions: []
+  questions: [],
+  youtubeSuggestions: [],
+  ebaySuggestions: []
 }
 
 interface Entry {
@@ -114,21 +113,35 @@ function scoreFromMetrics(e: Entry): void {
 
   let score: number
   if (m.probed) {
-    // MEASURED market analytics carry 85% of the score
+    // MEASURED market analytics carry 90% of the score
     const buyerScore = Math.min(100, m.buyerFormats.length * 20)
     const breadthScore = Math.min(100, (m.breadth / 15) * 100)
     const questionScore = Math.min(100, m.questionCount * 25)
+    const ytScore = Math.min(100, m.youtubeSuggestions.length * 20)
+    const ebayScore = Math.min(100, m.ebaySuggestions.length * 34)
 
     reasons.unshift(`${m.breadth} distinct real searches found across Google + Bing`)
     if (m.buyerFormats.length)
       reasons.push(`Buyer demand verified on BOTH engines: "${e.term}" + ${m.buyerFormats.slice(0, 5).join(' / ')}`)
     else reasons.push('No printable/template/pdf demand detected on either engine')
     if (m.questionCount) reasons.push(`${m.questionCount} real questions people ask (e.g. "${m.questions[0] ?? ''}")`)
+    if (m.youtubeSuggestions.length)
+      reasons.push(`YouTube search demand (${m.youtubeSuggestions.length} matches, e.g. "${m.youtubeSuggestions[0]}")`)
+    if (m.ebaySuggestions.length)
+      reasons.push(`eBay purchase-search demand (${m.ebaySuggestions.length} matches, e.g. "${m.ebaySuggestions[0]}")`)
 
     // Verified trends are marked +30 so they always outrank unprobed preliminary
     // scores — real market data beats guesses. (Score clamps at 100.)
     const verifiedBoost = m.buyerFormats.length > 0 ? 30 : 0
-    score = verifiedBoost + 0.4 * buyerScore + 0.3 * breadthScore + 0.15 * questionScore + 0.1 * evergreenScore + 0.05 * multiScore
+    score =
+      verifiedBoost +
+      0.35 * buyerScore +
+      0.25 * breadthScore +
+      0.12 * questionScore +
+      0.1 * ytScore +
+      0.08 * ebayScore +
+      0.1 * evergreenScore +
+      0.05 * multiScore
   } else {
     // Not market-probed this refresh — preliminary score, capped low so
     // market-verified trends always outrank it.
@@ -145,6 +158,28 @@ function scoreFromMetrics(e: Entry): void {
 
   e.score = clamp(score)
   e.reasons = reasons
+}
+
+// Probe ONE trend on demand ("Probe market data" button) — returns metrics,
+// recomputed score and reasons without running a full refresh.
+export async function probeSingleTrend(
+  term: string,
+  sources: string[],
+  traffic?: string
+): Promise<{ metrics: TrendMetrics; score: number; reasons: string[] }> {
+  const e: Entry = {
+    term,
+    source: (sources[0] as GlobalTrend['source']) ?? 'google',
+    sources: sources as GlobalTrend['source'][],
+    traffic,
+    url: undefined,
+    metrics: UNPROBED,
+    score: 0,
+    reasons: []
+  }
+  e.metrics = await probeTrend(term)
+  scoreFromMetrics(e)
+  return { metrics: e.metrics, score: e.score, reasons: e.reasons }
 }
 
 export async function refreshGlobalTrends(db: D1Database): Promise<{ fetched: number; stored: number; probed: number }> {
@@ -174,10 +209,20 @@ export async function refreshGlobalTrends(db: D1Database): Promise<{ fetched: nu
     reasons: []
   }))
 
-  // Market-probe the most promising terms (multi-source + evergreen first).
-  // Capped to stay inside Worker subrequest budgets (40 terms × 2 engines).
-  const priority = (e: Entry) =>
-    (e.sources.length > 1 ? 2 : 0) + (EVERGREEN.some((re) => re.test(e.term)) ? 1 : 0)
+  // Market-probe the most promising terms. Evergreen niches and how-to-shaped
+  // phrases get priority — those are the ones that can actually have buyer
+  // demand. Celebrity/news terms (common among multi-platform trends) are
+  // deprioritized; probing them wastes subrequests. Capped at 40 terms.
+  const priority = (e: Entry) => {
+    let p = 0
+    if (EVERGREEN.some((re) => re.test(e.term))) p += 4
+    if (/^(how to|what is|best|learn)\b/.test(e.term)) p += 3
+    if (e.sources.length > 1) p += 2
+    if (NEWSY.some((re) => re.test(e.term))) p -= 3
+    const words = e.term.split(/\s+/).length
+    if (words >= 2 && words <= 4) p += 1
+    return p
+  }
   const toProbe = entries
     .map((e, i) => ({ e, i }))
     .sort((a, b) => priority(b.e) - priority(a.e))
