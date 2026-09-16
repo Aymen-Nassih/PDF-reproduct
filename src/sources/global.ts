@@ -28,9 +28,9 @@ function xmlUnescape(s: string): string {
     .replace(/&#39;|&apos;/g, "'")
 }
 
-// --- Google Trends "Trending Now" RSS (daily search trends, with traffic) ---
+// --- Google Trends "Trending Now" RSS — last 7 days (hours=168), with traffic ---
 export async function fetchGoogleTrendsNow(): Promise<GlobalTrend[]> {
-  const xml = await fetchText('https://trends.google.com/trending/rss?geo=US', 9000)
+  const xml = await fetchText('https://trends.google.com/trending/rss?geo=US&hours=168', 9000)
   if (!xml) return []
   const out: GlobalTrend[] = []
   const items = xml.split('<item>').slice(1)
@@ -50,6 +50,9 @@ export async function fetchGoogleTrendsNow(): Promise<GlobalTrend[]> {
 }
 
 // --- X/Twitter trending topics via trends24 mirror (read-only scrape) ---
+// trends24 has no 7-day archive (day pages 404) — X trending is inherently a
+// current feed. The 7-day view for X is handled by persistence: trends that
+// keep appearing across the week accumulate seen_count in the trends table.
 export async function fetchTwitterTrends(): Promise<GlobalTrend[]> {
   const html = await fetchText('https://trends24.in/united-states/', 9000)
   if (!html) return []
@@ -68,9 +71,13 @@ export async function fetchTwitterTrends(): Promise<GlobalTrend[]> {
   return out
 }
 
-// --- Hacker News front page (tech market) ---
+// --- Hacker News: top stories of the LAST 7 DAYS (tech market) ---
 export async function fetchHackerNews(): Promise<GlobalTrend[]> {
-  const data = await fetchJson<any>('https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=25', 8000)
+  const weekAgo = Math.floor((Date.now() - 7 * 86400000) / 1000)
+  const data = await fetchJson<any>(
+    `https://hn.algolia.com/api/v1/search?tags=story&numericFilters=created_at_i>${weekAgo}&hitsPerPage=25`,
+    8000
+  )
   const hits = data?.hits ?? []
   return hits
     .filter((h: any) => h?.title)
@@ -83,12 +90,13 @@ export async function fetchHackerNews(): Promise<GlobalTrend[]> {
 }
 
 // --- Wikipedia most-viewed articles (global curiosity) ---
-// Pageview data publishes with a lag — walk back up to 3 days until we hit data.
+// Pageview data publishes with a lag — walk back up to 7 days (the app's
+// standard window) until we hit data.
 // Wikimedia API policy: browser-spoof UAs get 403; a descriptive UA is required.
 const WIKIMEDIA_UA = 'PdfTrendLab/1.0 (https://pdftrendlab.app; trend-research; contact: admin@pdftrendlab.app)'
 
 export async function fetchWikipediaTop(): Promise<GlobalTrend[]> {
-  for (let back = 1; back <= 3; back++) {
+  for (let back = 1; back <= 7; back++) {
     const now = new Date(Date.now() - back * 86400000)
     const y = now.getUTCFullYear()
     const mo = String(now.getUTCMonth() + 1).padStart(2, '0')
@@ -218,10 +226,10 @@ export async function fetchApplePodcasts(): Promise<GlobalTrend[]> {
     }))
 }
 
-// --- Stack Overflow hot questions (developer pain points) ---
+// --- Stack Overflow: hottest questions of the LAST 7 DAYS (developer pain points) ---
 export async function fetchStackOverflow(): Promise<GlobalTrend[]> {
   const data = await fetchJson<any>(
-    'https://api.stackexchange.com/2.3/questions?order=desc&sort=hot&site=stackoverflow&pagesize=20&filter=withbody',
+    'https://api.stackexchange.com/2.3/questions?order=desc&sort=week&site=stackoverflow&pagesize=20&filter=withbody',
     8000
   )
   const items = data?.items ?? []

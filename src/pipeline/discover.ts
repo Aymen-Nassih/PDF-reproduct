@@ -101,6 +101,7 @@ interface Entry {
   metrics: TrendMetrics
   score: number
   reasons: string[]
+  lastSeen?: string | null // preserved from prior sightings for week-window aging
 }
 
 function scoreFromMetrics(e: Entry): void {
@@ -206,6 +207,32 @@ export async function refreshGlobalTrends(
     }
   }
 
+  // 7-day persistence merge: trends that were seen within the last week but
+  // missing from THIS fetch get carried over with their stored metrics —
+  // this is what makes X/Twitter (and all current-feed sources) effectively
+  // "last 7 days" instead of "last snapshot".
+  const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 19).replace('T', ' ')
+  const normKey = (term: string) => term.replace(/[^a-z0-9\s#]/g, ' ').replace(/\s+/g, ' ').trim()
+  const freshKeys = new Set(all.map((t) => normKey(t.term)).filter(Boolean))
+  const storedRecent = await db
+    .prepare(`SELECT * FROM trends WHERE last_seen >= ?`)
+    .bind(weekAgo)
+    .all<any>()
+  // Map stored rows by normalized key — used to preserve previously-probed
+  // market metrics for trends that aren't re-probed this cycle.
+  const storedByKey = new Map<string, any>()
+  for (const r of storedRecent.results) storedByKey.set(normKey(String(r.term)), r)
+  for (const r of storedRecent.results) {
+    const key = normKey(String(r.term))
+    if (freshKeys.has(key)) continue // already in this fetch — will be upserted
+    all.push({
+      term: String(r.term),
+      source: r.source as GlobalTrend['source'],
+      traffic: r.traffic ?? undefined,
+      url: (JSON.parse(r.extra || '{}') as any).url ?? undefined
+    })
+  }
+
   // Group by normalized term across sources
   const groups = new Map<string, { rep: GlobalTrend; sources: Set<GlobalTrend['source']> }>()
   for (const t of all) {
@@ -217,21 +244,30 @@ export async function refreshGlobalTrends(
     if (!g.rep.traffic && t.traffic) g.rep = t
   }
 
-  const entries: Entry[] = [...groups.values()].map((g) => ({
-    term: g.rep.term,
-    source: g.rep.source,
-    sources: [...g.sources],
-    traffic: g.rep.traffic,
-    url: g.rep.url,
-    metrics: UNPROBED,
-    score: 0,
-    reasons: []
-  }))
+  const entries: Entry[] = [...groups.values()].map((g) => {
+    const stored = storedByKey.get(normKey(g.rep.term))
+    const storedMetrics = stored ? (JSON.parse(stored.metrics || '{}') as TrendMetrics) : null
+    const storedSources: string[] = stored ? (JSON.parse(stored.extra || '{}') as any).sources ?? [] : []
+    return {
+      term: g.rep.term,
+      source: g.rep.source,
+      // Merge sources from prior sightings (week persistence) with this fetch
+      sources: [...new Set([...g.sources, ...storedSources])] as GlobalTrend['source'][],
+      traffic: g.rep.traffic ?? stored?.traffic ?? undefined,
+      url: g.rep.url,
+      // Preserve previously-probed market metrics unless re-probed below
+      metrics: storedMetrics?.probed ? storedMetrics : UNPROBED,
+      score: 0,
+      reasons: [],
+      lastSeen: stored?.last_seen ?? null
+    }
+  })
 
   // Market-probe the most promising terms. Evergreen niches and how-to-shaped
   // phrases get priority — those are the ones that can actually have buyer
   // demand. Celebrity/news terms (common among multi-platform trends) are
   // deprioritized; probing them wastes subrequests. Capped at 40 terms.
+  // Already-probed entries keep their stored metrics — no re-probe needed.
   const priority = (e: Entry) => {
     let p = 0
     if (EVERGREEN.some((re) => re.test(e.term))) p += 4
@@ -244,6 +280,7 @@ export async function refreshGlobalTrends(
   }
   const toProbe = entries
     .map((e, i) => ({ e, i }))
+    .filter(({ e }) => !e.metrics.probed)
     .sort((a, b) => priority(b.e) - priority(a.e))
     .slice(0, 40)
 
@@ -257,6 +294,9 @@ export async function refreshGlobalTrends(
   let stored = 0
   for (const e of entries) {
     const id = await hashId([...e.sources].sort().join('+') + ':' + e.term)
+    // Carried-over (not freshly-fetched) trends keep their ORIGINAL last_seen so
+    // they age out of the 7-day window; fresh sightings reset the clock.
+    const lastSeen = e.lastSeen ?? null
     await db
       .prepare(
         `INSERT INTO trends (id, term, source, traffic, pdf_potential, reasons, extra, metrics, buyer_formats, first_seen, last_seen, seen_count)
@@ -264,7 +304,8 @@ export async function refreshGlobalTrends(
          ON CONFLICT(id) DO UPDATE SET
            traffic=excluded.traffic, pdf_potential=excluded.pdf_potential, reasons=excluded.reasons,
            extra=excluded.extra, metrics=excluded.metrics, buyer_formats=excluded.buyer_formats,
-           last_seen=datetime('now'), seen_count=seen_count+1`
+           last_seen=CASE WHEN ? IS NULL THEN datetime('now') ELSE last_seen END,
+           seen_count=seen_count+1`
       )
       .bind(
         id,
@@ -275,15 +316,16 @@ export async function refreshGlobalTrends(
         JSON.stringify(e.reasons),
         JSON.stringify({ url: e.url ?? null, sources: e.sources }),
         JSON.stringify(e.metrics),
-        e.metrics.buyerFormats.length
+        e.metrics.buyerFormats.length,
+        lastSeen
       )
       .run()
     stored++
   }
 
-  // Prune trends that disappeared from all sources (they kept old scores
-  // and would otherwise pollute the ranking with stale data)
-  await db.prepare('DELETE FROM trends WHERE last_seen < ?').bind(refreshStart).run()
+  // Prune anything older than the 7-day window (and anything from before this
+  // run that wasn't carried over)
+  await db.prepare('DELETE FROM trends WHERE last_seen < ?').bind(weekAgo).run()
 
   return { fetched: all.length, stored, probed: toProbe.length }
 }

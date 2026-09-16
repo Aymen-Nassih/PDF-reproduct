@@ -58,7 +58,7 @@ async function searchOAuth(seed: string, keys: RedditKeys): Promise<RedditPost[]
   if (!token) return []
   const queries = PROBLEM_QUERIES.map((q) => q.replace('{seed}', seed))
   const results = await mapLimit(queries, 3, async (q) => {
-    const url = `https://oauth.reddit.com/search?q=${encodeURIComponent(q)}&sort=relevance&limit=12&t=year`
+    const url = `https://oauth.reddit.com/search?q=${encodeURIComponent(q)}&sort=relevance&limit=12&t=week`
     try {
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${token}`, 'User-Agent': keys.redditUserAgent ?? 'PdfTrendLab/1.0' }
@@ -82,9 +82,9 @@ async function searchOAuth(seed: string, keys: RedditKeys): Promise<RedditPost[]
 
 // --- Fallback mode (current behavior) ---
 const ENDPOINTS = [
-  (q: string) => `https://www.reddit.com/search.json?q=${encodeURIComponent(q)}&sort=relevance&limit=12&t=year`,
-  (q: string) => `https://old.reddit.com/search.json?q=${encodeURIComponent(q)}&sort=relevance&limit=12&t=year`,
-  (q: string) => `https://api.reddit.com/search?q=${encodeURIComponent(q)}&sort=relevance&limit=12&t=year`
+  (q: string) => `https://www.reddit.com/search.json?q=${encodeURIComponent(q)}&sort=relevance&limit=12&t=week`,
+  (q: string) => `https://old.reddit.com/search.json?q=${encodeURIComponent(q)}&sort=relevance&limit=12&t=week`,
+  (q: string) => `https://api.reddit.com/search?q=${encodeURIComponent(q)}&sort=relevance&limit=12&t=week`
 ]
 
 async function searchOne(q: string): Promise<RedditPost[]> {
