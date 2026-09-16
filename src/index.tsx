@@ -3,7 +3,16 @@ import { cors } from 'hono/cors'
 import { serveStatic } from 'hono/cloudflare-workers'
 import { api } from './api/routes'
 
-type Bindings = { DB: D1Database }
+type Bindings = {
+  DB: D1Database
+  YOUTUBE_API_KEY?: string
+  REDDIT_CLIENT_ID?: string
+  REDDIT_CLIENT_SECRET?: string
+  REDDIT_USER_AGENT?: string
+  SERPER_API_KEY?: string
+  DATAFORSEO_LOGIN?: string
+  DATAFORSEO_PASSWORD?: string
+}
 
 const app = new Hono<{ Bindings: Bindings }>()
 

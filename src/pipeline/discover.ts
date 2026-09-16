@@ -9,6 +9,8 @@
 import { fetchAllGlobal, type GlobalTrend } from '../sources/global'
 import { mapLimit } from '../sources/http'
 import { googleSuggest, bingSuggest, youtubeSuggest, ebaySuggest } from '../sources/suggest'
+import { fetchYouTubeMostPopular } from '../sources/youtube'
+import type { ApiKeys } from '../sources/keys'
 import { FORMAT_KEYWORDS } from './market'
 
 const clamp = (v: number, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, Math.round(v)))
@@ -182,10 +184,27 @@ export async function probeSingleTrend(
   return { metrics: e.metrics, score: e.score, reasons: e.reasons }
 }
 
-export async function refreshGlobalTrends(db: D1Database): Promise<{ fetched: number; stored: number; probed: number }> {
+export async function refreshGlobalTrends(
+  db: D1Database,
+  keys: ApiKeys = {}
+): Promise<{ fetched: number; stored: number; probed: number }> {
   // Snapshot start time — rows not refreshed by this run are stale trends and get pruned
   const refreshStart = new Date().toISOString().slice(0, 19).replace('T', ' ')
   const all = await fetchAllGlobal()
+
+  // With a YouTube Data API key, pull the TRUE trending chart (mostPopular)
+  // — richer and more reliable than scraping search pages
+  if (keys.youtubeApiKey) {
+    const popular = await fetchYouTubeMostPopular(keys.youtubeApiKey).catch(() => [])
+    for (const v of popular) {
+      all.push({
+        term: v.title.toLowerCase(),
+        source: 'youtube',
+        traffic: `${(v.views / 1e6).toFixed(1)}M views`,
+        url: v.url
+      })
+    }
+  }
 
   // Group by normalized term across sources
   const groups = new Map<string, { rep: GlobalTrend; sources: Set<GlobalTrend['source']> }>()

@@ -1,8 +1,20 @@
 import { Hono } from 'hono'
 import { runPipeline } from '../pipeline'
 import { refreshGlobalTrends, probeSingleTrend } from '../pipeline/discover'
+import { extractKeys, keyStatus } from '../sources/keys'
 
-type Bindings = { DB: D1Database }
+type Bindings = {
+  DB: D1Database
+  // Optional API secrets (set via Deploy panel / .dev.vars) — all optional,
+  // every feature degrades gracefully without them
+  YOUTUBE_API_KEY?: string
+  REDDIT_CLIENT_ID?: string
+  REDDIT_CLIENT_SECRET?: string
+  REDDIT_USER_AGENT?: string
+  SERPER_API_KEY?: string
+  DATAFORSEO_LOGIN?: string
+  DATAFORSEO_PASSWORD?: string
+}
 
 export const api = new Hono<{ Bindings: Bindings }>()
 
@@ -27,7 +39,7 @@ function parseIdea(r: any) {
 api.post('/search', async (c) => {
   const { seed } = await c.req.json<{ seed?: string }>().catch(() => ({ seed: undefined }))
   if (!seed || typeof seed !== 'string') return c.json({ error: 'seed is required' }, 400)
-  const result = await runPipeline(seed, c.env.DB)
+  const result = await runPipeline(seed, c.env.DB, extractKeys(c.env as unknown as Record<string, unknown>))
   return c.json({ seed: seed.trim().toLowerCase(), ...result })
 })
 
@@ -35,8 +47,13 @@ api.post('/search', async (c) => {
 api.get('/search', async (c) => {
   const seed = c.req.query('seed') ?? ''
   if (!seed.trim()) return c.json({ error: 'seed is required' }, 400)
-  const result = await runPipeline(seed, c.env.DB)
+  const result = await runPipeline(seed, c.env.DB, extractKeys(c.env as unknown as Record<string, unknown>))
   return c.json({ seed: seed.trim().toLowerCase(), ...result })
+})
+
+// GET /api/keys/status -> which API integrations are active (booleans only, never values)
+api.get('/keys/status', (c) => {
+  return c.json({ integrations: keyStatus(extractKeys(c.env as unknown as Record<string, unknown>)) })
 })
 
 // GET /api/ideas?q=&category=&difficulty=&rising=1&min=60&sort=opportunity&limit=
@@ -227,7 +244,10 @@ api.get('/discover', async (c) => {
 
   const latest = await c.env.DB.prepare('SELECT MAX(last_seen) latest FROM trends').first<any>()
   const stale = !latest?.latest || Date.now() - new Date(latest.latest + 'Z').getTime() > TRENDS_STALE_MS
-  if (stale) c.executionCtx.waitUntil(refreshGlobalTrends(c.env.DB).catch(() => {}))
+  if (stale)
+    c.executionCtx.waitUntil(
+      refreshGlobalTrends(c.env.DB, extractKeys(c.env as unknown as Record<string, unknown>)).catch(() => {})
+    )
 
   const where: string[] = ['pdf_potential >= ?']
   const params: any[] = [min]
@@ -256,7 +276,7 @@ api.get('/discover', async (c) => {
 
 // POST /api/discover/refresh -> force re-fetch of all global sources
 api.post('/discover/refresh', async (c) => {
-  const result = await refreshGlobalTrends(c.env.DB)
+  const result = await refreshGlobalTrends(c.env.DB, extractKeys(c.env as unknown as Record<string, unknown>))
   return c.json(result)
 })
 

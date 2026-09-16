@@ -5,6 +5,10 @@ import { expandSeedBing } from '../sources/bing'
 import { getTrends } from '../sources/trends'
 import { mineReddit } from '../sources/reddit'
 import { youtubeSuggest, ebaySuggest } from '../sources/suggest'
+import { probeYouTubeSeed } from '../sources/youtube'
+import { probeSerper } from '../sources/serper'
+import { probeSearchVolume } from '../sources/volume'
+import type { ApiKeys } from '../sources/keys'
 import { clusterTexts, tokenize } from './clustering'
 import { computeScores } from './scoring'
 import { analyzeMarket, computeSellability, generateProductIdea } from './market'
@@ -93,7 +97,11 @@ function titleFrom(members: string[], centroidTokens: string[], seed: string): s
   return titled.length > 70 ? titled.slice(0, 67) + '…' : titled
 }
 
-export async function runPipeline(seed: string, db: D1Database): Promise<{ ideas: number; error?: string }> {
+export async function runPipeline(
+  seed: string,
+  db: D1Database,
+  keys: ApiKeys = {}
+): Promise<{ ideas: number; error?: string }> {
   const cleanSeed = seed.trim().toLowerCase()
   if (cleanSeed.length < 2 || cleanSeed.length > 60) return { ideas: 0, error: 'Invalid seed' }
 
@@ -112,18 +120,36 @@ export async function runPipeline(seed: string, db: D1Database): Promise<{ ideas
     .run()
 
   try {
-    // 1. Pull all sources in parallel (search engines + video + commerce)
-    const [ac, trends, reddit, bing, ytSug, ebSug] = await Promise.all([
+    // 1. Pull all sources in parallel (free keyless sources always;
+    //    key-gated sources only when secrets are configured)
+    const [ac, trends, reddit, bing, ytSug, ebSug, ytApi, serper] = await Promise.all([
       expandSeed(cleanSeed),
       getTrends(cleanSeed),
-      mineReddit(cleanSeed),
+      mineReddit(cleanSeed, keys),
       expandSeedBing(cleanSeed),
       youtubeSuggest(cleanSeed),
-      ebaySuggest(cleanSeed)
+      ebaySuggest(cleanSeed),
+      keys.youtubeApiKey ? probeYouTubeSeed(cleanSeed, keys.youtubeApiKey) : Promise.resolve(null),
+      keys.serperApiKey ? probeSerper(cleanSeed, keys.serperApiKey) : Promise.resolve(null)
     ])
 
-    const allTexts = [...new Set([...ac.suggestions, ...reddit.posts.map((p) => p.title.toLowerCase())])]
+    // Serper PAA + related searches are premium "what people need" data — merge into clustering pool
+    const allTexts = [
+      ...new Set([
+        ...ac.suggestions,
+        ...reddit.posts.map((p) => p.title.toLowerCase()),
+        ...(serper?.peopleAlsoAsk ?? []),
+        ...(serper?.relatedSearches ?? [])
+      ])
+    ]
     const distinctQueries = allTexts.length + (trends.ok ? trends.risingQueries.length : 0)
+
+    // Real search volume for the seed (DataForSEO) when configured
+    let volume = { searchVolume: 0, cpc: 0, competition: 0, ok: false }
+    if (keys.dataforseoLogin && keys.dataforseoPassword) {
+      const vmap = await probeSearchVolume([cleanSeed], keys.dataforseoLogin, keys.dataforseoPassword)
+      volume = vmap.get(cleanSeed) ?? volume
+    }
 
     // 2. Cluster into ideas — seed tokens are excluded from similarity
     // (they appear in nearly every suggestion and would merge all clusters)
@@ -143,7 +169,11 @@ export async function runPipeline(seed: string, db: D1Database): Promise<{ ideas
         clusterSize: cluster.members.length,
         redditEngagement: reddit.totalEngagement,
         clusterTexts: texts,
-        seed: cleanSeed
+        seed: cleanSeed,
+        realVolume: volume.searchVolume || undefined,
+        realCpc: volume.cpc || undefined,
+        youtubeTotalViews: ytApi?.totalViews || undefined,
+        youtubeTotalResults: ytApi?.totalResults || undefined
       })
 
       const title = titleFrom(cluster.members, cluster.centroidTokens, cleanSeed)
@@ -183,7 +213,16 @@ export async function runPipeline(seed: string, db: D1Database): Promise<{ ideas
           redditPosts: reddit.posts.length,
           redditQuestions: reddit.questions.length,
           trendsOk: trends.ok,
-          redditSample: reddit.posts.slice(0, 6)
+          redditSample: reddit.posts.slice(0, 6),
+          redditMode: reddit.mode,
+          youtubeApi: ytApi?.ok ?? false,
+          youtubeTotalViews: ytApi?.totalViews ?? 0,
+          youtubeTopVideos: ytApi?.topVideos?.slice(0, 5) ?? [],
+          serperOk: serper?.ok ?? false,
+          paaQuestions: serper?.peopleAlsoAsk?.length ?? 0,
+          volumeOk: volume.ok,
+          realVolume: volume.searchVolume,
+          realCpc: volume.cpc
         }),
         explain: JSON.stringify(scores.explain),
         trend_series: JSON.stringify(trends.series),

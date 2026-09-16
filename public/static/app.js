@@ -610,6 +610,16 @@
     if (refreshed) return
     refreshed = true
     axios.get('/api/refresh-stale').catch(() => {})
+    // Show which API integrations are live (booleans only — values never leave the server)
+    axios.get('/api/keys/status').then((res) => {
+      const k = res.data.integrations || {}
+      const active = Object.entries(k).filter(([, v]) => v).map(([n]) => n)
+      if (!active.length) return
+      const el = document.createElement('div')
+      el.className = 'fixed bottom-3 right-3 bg-white border border-slate-200 rounded-lg shadow-sm px-3 py-2 text-xs text-slate-600 z-50 no-print'
+      el.innerHTML = `<i class="fas fa-plug text-emerald-500 mr-1"></i>API live: ${active.join(', ')}`
+      document.body.appendChild(el)
+    }).catch(() => {})
   }
 
   // ---------- router ----------

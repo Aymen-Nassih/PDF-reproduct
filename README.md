@@ -127,10 +127,23 @@ the full reason list.
 5. **Generate PDF Outline** → algorithmic chapter outline from real questions → Print / Save as PDF
 6. Star ideas to favorites; export everything to CSV
 
+## Optional API keys (drop-in upgrades)
+All features work without keys. Adding any of these as Worker secrets (Deploy panel) or in
+`.dev.vars` locally upgrades the corresponding data source — no code changes, features light up
+automatically. Check which are live via `GET /api/keys/status` (booleans only, values never exposed).
+See `.dev.vars.example` for step-by-step registration instructions.
+
+| Secret(s) | Unlocks | Cost |
+|---|---|---|
+| `YOUTUBE_API_KEY` | True trending videos (mostPopular) in Discover; view-count demand in seed scores | Free (10k units/day) |
+| `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET` | Reliable Reddit mining via official OAuth API | Free (100 req/min) |
+| `SERPER_API_KEY` | People-Also-Ask question clusters + related searches merged into clustering | ~$0.001/query |
+| `DATAFORSEO_LOGIN` + `DATAFORSEO_PASSWORD` | REAL monthly search volumes + CPC in demand scores | ~$0.05/1k keywords |
+
 ## Not yet implemented / known limitations
-- **Google Trends + Reddit are rate-limited from datacenter IPs** (429/403 in the sandbox) — they
-  degrade gracefully (interest/momentum default to neutral; no crash). On a residential IP or via a
-  proxy/SerpAPI key they light up fully. Code paths are live and ready.
+- **Google Trends + Reddit are rate-limited from datacenter IPs** (429/403) without keys — they
+  degrade gracefully. Reddit has an official OAuth path now (free, see above); Trends historical
+  data lights up with a Serper key or from friendlier IPs.
 - **Etsy/Amazon SERP scraping is IP-blocked** — instead, sellability uses cross-engine format-keyword
   confirmation, and each product idea ships marketplace search deep-links for manual competition checks
 - Search-volume estimates (DataForSEO) not wired — demand is currently a query-count proxy

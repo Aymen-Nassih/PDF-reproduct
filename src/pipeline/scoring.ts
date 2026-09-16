@@ -45,6 +45,10 @@ export interface ScoreInput {
   redditEngagement: number // upvotes + 2*comments
   clusterTexts: string[] // texts in this cluster (for buyer intent)
   seed: string // seed keyword — phrases contained in it are excluded from buyer-intent matching
+  realVolume?: number // DataForSEO monthly search volume for the seed (0 = unknown)
+  realCpc?: number // DataForSEO CPC in USD (commercial value signal)
+  youtubeTotalViews?: number // total views across top YouTube videos for the seed
+  youtubeTotalResults?: number // how many videos exist for this search
 }
 
 export interface ScoreOutput {
@@ -65,9 +69,24 @@ export function computeScores(input: ScoreInput): ScoreOutput {
   // Map momentum %change: -50% .. +100%  ->  0 .. 100
   const momentum = clamp(((input.momentumRaw + 50) / 150) * 100)
 
-  // Demand proxy: how many distinct real queries this specific cluster attracts
-  // (log scale — a cluster of 2 is weak, 10+ is strong)
-  const demand = clamp((Math.log10(1 + input.clusterSize) / Math.log10(1 + 60)) * 100)
+  // Demand: real monthly search volume when DataForSEO is wired in
+  // (log scale: 100 → 1M searches/mo), else the query-count proxy.
+  let demand: number
+  let demandNote: string
+  if (input.realVolume && input.realVolume > 0) {
+    demand = clamp((Math.log10(1 + input.realVolume) / Math.log10(1 + 1_000_000)) * 100)
+    demandNote = `REAL monthly search volume: ${input.realVolume.toLocaleString()} searches (DataForSEO)${input.realCpc ? `, CPC $${input.realCpc.toFixed(2)}` : ''} + ${input.clusterSize} queries in this cluster`
+  } else {
+    demand = clamp((Math.log10(1 + input.clusterSize) / Math.log10(1 + 60)) * 100)
+    demandNote = `${input.clusterSize} distinct real queries in this idea cluster (${input.distinctQueries} total for the seed) across Google Autocomplete + Reddit`
+  }
+  // YouTube consumption demand lifts the score slightly — people watching
+  // how-to videos for this niche are the PDF-guide audience.
+  if (input.youtubeTotalViews && input.youtubeTotalViews > 0) {
+    const ytBoost = Math.min(10, Math.log10(1 + input.youtubeTotalViews) * 1.5)
+    demand = clamp(demand + ytBoost)
+    demandNote += ` + YouTube: ${(input.youtubeTotalViews / 1e6).toFixed(1)}M views across top videos`
+  }
 
   // Competition proxy: dominated by cluster breadth (a big cluster = a
   // well-covered sub-topic = harder to rank a new PDF), with a mild global
@@ -110,7 +129,7 @@ export function computeScores(input: ScoreInput): ScoreOutput {
       redditEngagement: input.redditEngagement,
       trendsAvg12mo: Math.round(input.trendsAvg),
       momentumPctChange: Math.round(input.momentumRaw),
-      demandNote: `${input.clusterSize} distinct real queries in this idea cluster (${input.distinctQueries} total for the seed) across Google Autocomplete + Reddit`,
+      demandNote,
       competitionNote:
         competition >= 70
           ? 'Low crowding — few overlapping queries, room for a new PDF guide'

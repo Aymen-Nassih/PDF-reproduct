@@ -1,0 +1,27 @@
+# Optional API keys — copy this file to .dev.vars for local dev (never commit .dev.vars).
+# For production, set these as Worker secrets via the Deploy panel or `gsk hosted secret_put`.
+# Every feature works WITHOUT these — keys unlock richer, more reliable data.
+
+# --- YouTube Data API v3 (FREE: 10,000 units/day) ---
+# 1. console.cloud.google.com → create project → enable "YouTube Data API v3"
+# 2. Credentials → Create API key
+# Unlocks: true trending videos in Discover + view-count demand in seed scores
+YOUTUBE_API_KEY=
+
+# --- Reddit OAuth (FREE: 100 req/min) ---
+# 1. https://www.reddit.com/prefs/apps → "create app" → type: script
+# Unlocks: reliable Reddit mining (no more datacenter rate-limiting)
+REDDIT_CLIENT_ID=
+REDDIT_CLIENT_SECRET=
+REDDIT_USER_AGENT=PdfTrendLab/1.0 by your_reddit_username
+
+# --- Serper.dev (~$0.001/query, $50 credit ≈ 1 year of heavy use) ---
+# 1. serper.dev → sign up → API key
+# Unlocks: People-Also-Ask question clusters + related searches in seed pipeline
+SERPER_API_KEY=
+
+# --- DataForSEO (~$0.05 per 1,000 keywords) ---
+# 1. dataforseo.com → sign up → API login/password (dashboard → API access)
+# Unlocks: REAL monthly search volumes + CPC in demand scores
+DATAFORSEO_LOGIN=
+DATAFORSEO_PASSWORD=
