@@ -573,9 +573,10 @@
         try {
           const res = await axios.post('/api/search', { seed: b.dataset.term }, { timeout: 120000 })
           if (res.data.error && res.data.error !== 'Fresh data already exists') throw new Error(res.data.error)
+          b.disabled = false
           b.innerHTML = '<i class="fas fa-check mr-1"></i>Mined! View →'
           b.classList.remove('bg-accent', 'hover:bg-indigo-500')
-          b.classList.add('bg-emerald-600')
+          b.classList.add('bg-emerald-600', 'hover:bg-emerald-500')
           b.addEventListener('click', () => { state.q = b.dataset.term; go('/') }, { once: true })
         } catch (err) {
           b.innerHTML = '<i class="fas fa-triangle-exclamation mr-1"></i>Failed'
