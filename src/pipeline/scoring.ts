@@ -40,6 +40,7 @@ const BUYER_PHRASES = [
 export interface ScoreInput {
   trendsAvg: number // 0-100 raw trends average
   momentumRaw: number // % change last 90d vs prior 90d (can be negative)
+  momentumSource?: 'google_trends' | 'fallback_signals' // transparency for explain
   distinctQueries: number // total distinct suggestions + questions + reddit posts
   clusterSize: number // members of this cluster
   redditEngagement: number // upvotes + 2*comments
@@ -129,6 +130,10 @@ export function computeScores(input: ScoreInput): ScoreOutput {
       redditEngagement: input.redditEngagement,
       trendsAvg12mo: Math.round(input.trendsAvg),
       momentumPctChange: Math.round(input.momentumRaw),
+      momentumNote:
+        input.momentumSource === 'fallback_signals'
+          ? 'Momentum estimated from live signals: presence in the global 7-day trend feed, YouTube view velocity, Reddit engagement (Google Trends rate-limited from this IP)'
+          : 'Momentum from Google Trends: last 90 days vs prior 90 days',
       demandNote,
       competitionNote:
         competition >= 70

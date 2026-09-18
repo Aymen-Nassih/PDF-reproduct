@@ -151,6 +151,30 @@ export async function runPipeline(
       volume = vmap.get(cleanSeed) ?? volume
     }
 
+    // Momentum fallback: Google Trends is rate-limited from datacenter IPs,
+    // so when it's unavailable derive a momentum proxy from live signals —
+    // otherwise `rising` can never be earned and the Trending page stays empty.
+    let momentumRaw = trends.ok ? trends.momentumRaw : 0
+    let momentumSource: 'google_trends' | 'fallback_signals' = 'google_trends'
+    if (!trends.ok) {
+      momentumSource = 'fallback_signals'
+      let fb = 0
+      // (a) The seed is currently present in our own global 7-day trend feed —
+      //     it is trending right now by definition.
+      try {
+        const hit = await db
+          .prepare(`SELECT seen_count FROM trends WHERE lower(term) = ? AND last_seen >= datetime('now', '-7 days') LIMIT 1`)
+          .bind(cleanSeed)
+          .first<any>()
+        if (hit) fb += 25 + Math.min(15, (hit.seen_count ?? 1) * 3)
+      } catch { /* trends table may not exist on a fresh DB — ignore */ }
+      // (b) YouTube consumption velocity for the niche
+      if (ytApi?.ok && ytApi.totalViews > 0) fb += Math.min(25, Math.log10(1 + ytApi.totalViews) * 2.5)
+      // (c) Reddit discussion heat
+      if (reddit.totalEngagement > 0) fb += Math.min(20, Math.log10(1 + reddit.totalEngagement) * 5)
+      momentumRaw = Math.min(80, fb) // cap below what a real Trends breakout shows
+    }
+
     // 2. Cluster into ideas — seed tokens are excluded from similarity
     // (they appear in nearly every suggestion and would merge all clusters)
     const clusters = clusterTexts(allTexts, 0.4, tokenize(cleanSeed))
@@ -164,7 +188,8 @@ export async function runPipeline(
       const texts = cluster.members
       const scores = computeScores({
         trendsAvg: trends.ok ? trends.avgInterest : 25,
-        momentumRaw: trends.ok ? trends.momentumRaw : 0,
+        momentumRaw,
+        momentumSource,
         distinctQueries,
         clusterSize: cluster.members.length,
         redditEngagement: reddit.totalEngagement,

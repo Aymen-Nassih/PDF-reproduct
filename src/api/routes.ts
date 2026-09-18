@@ -158,11 +158,19 @@ api.get('/trending-words', async (c) => {
 })
 
 // GET /api/trending -> newest + rising ideas (the "Trending Now" feed)
+// Falls back to the freshest highest-momentum ideas when nothing is flagged
+// rising yet (e.g. before momentum fallbacks have had a chance to run).
 api.get('/trending', async (c) => {
-  const rows = await c.env.DB
+  const rising = await c.env.DB
     .prepare(`SELECT * FROM ideas WHERE rising = 1 ORDER BY updated_at DESC LIMIT 24`)
     .all()
-  return c.json({ ideas: rows.results.map(parseIdea) })
+  if (rising.results.length) {
+    return c.json({ ideas: rising.results.map(parseIdea), mode: 'rising' })
+  }
+  const fresh = await c.env.DB
+    .prepare(`SELECT * FROM ideas ORDER BY momentum DESC, updated_at DESC LIMIT 24`)
+    .all()
+  return c.json({ ideas: fresh.results.map(parseIdea), mode: 'fresh' })
 })
 
 // GET /api/stats -> dashboard header numbers
